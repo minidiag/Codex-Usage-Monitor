@@ -1,0 +1,37 @@
+erDiagram
+TENANTS ||--o{ DEVICES : registers
+TENANTS ||--o{ STREAMS : owns
+DEVICES ||--o{ STREAMS : attribution
+STREAMS ||--o{ USAGE_EVENTS : contains
+USAGE_EVENTS ||--o| USAGE_DELTAS : derives
+TENANTS {
+  uuid id PK
+}
+DEVICES {
+  uuid tenant_id PK
+  uuid id PK
+}
+STREAMS {
+  uuid tenant_id PK
+  string stream_id PK
+  int epoch PK
+  string anchor_id
+  bigint durable_through
+  bigint processed_through
+}
+USAGE_EVENTS {
+  string stream_key PK
+  bigint source_seq PK
+  string event_id
+  string semantic_hash
+  datetime event_time
+  bigint cumulative_input
+  bigint cumulative_output
+}
+USAGE_DELTAS {
+  string event_key PK
+  datetime event_time
+  bigint input_tokens
+  bigint output_tokens
+  numeric total_tokens
+}

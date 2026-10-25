@@ -1,0 +1,16 @@
+sequenceDiagram
+participant S as 源日志
+participant C as 采集器
+participant L as 本地 SQLite
+participant A as 远端 API
+participant P as PostgreSQL
+S->>C: 读取闭合的用量记录
+C->>L: 同事务写入 Outbox 和更新游标
+L-->>C: 本地提交成功
+C->>A: POST 同一流批次
+A->>P: 锁定流 判重 保存 归并派生
+P-->>A: COMMIT 成功
+A-->>C: durable_through 和 processed_through
+C->>L: 标记本批已持久接收
+Note over C,P: 应答丢失可重发 相同记录只计一次
+Note over A,P: 缺段可持久保存 但不越过缺口派生

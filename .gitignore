@@ -1,0 +1,7 @@
+.local/
+**/.env
+/private/
+/backups/
+/wheels/
+__pycache__/
+*.py[cod]

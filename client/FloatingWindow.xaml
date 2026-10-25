@@ -1,0 +1,111 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+ xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+ Title="Codex Usage Monitor · 用量与额度" Width="350" Height="666"
+ WindowStyle="None" ResizeMode="NoResize" AllowsTransparency="True" Background="Transparent"
+ Topmost="True" ShowInTaskbar="True" FontFamily="Microsoft YaHei UI" Foreground="#EFF4FC">
+ <Window.Resources>
+  <Style TargetType="Button"><Setter Property="Background" Value="Transparent"/><Setter Property="Foreground" Value="#96A8C4"/>
+   <Setter Property="BorderThickness" Value="0"/><Setter Property="Padding" Value="7,2"/>
+   <Setter Property="FontSize" Value="17"/><Setter Property="Cursor" Value="Hand"/>
+  </Style>
+  <Style x:Key="Card" TargetType="Border"><Setter Property="Background" Value="#1B263D"/><Setter Property="CornerRadius" Value="12"/><Setter Property="Padding" Value="13,10"/></Style>
+  <Style x:Key="Period" TargetType="TextBlock"><Setter Property="Foreground" Value="#9FB1CE"/><Setter Property="FontSize" Value="11"/></Style>
+  <DataTemplate x:Key="AccountItem">
+   <Grid Margin="2,0" ToolTip="{Binding DisplayName}" HorizontalAlignment="Center">
+    <Grid.ColumnDefinitions><ColumnDefinition Width="24"/><ColumnDefinition Width="6"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+    <Grid Width="24" Height="24">
+     <Ellipse Fill="#34485F"/>
+     <Ellipse><Ellipse.Fill><ImageBrush ImageSource="{Binding Avatar}" Stretch="UniformToFill"/></Ellipse.Fill></Ellipse>
+     <TextBlock Text="{Binding Initials}" Foreground="#D8E7F6" FontSize="11" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center">
+      <TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers><DataTrigger Binding="{Binding HasAvatar}" Value="True"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger></Style.Triggers></Style></TextBlock.Style>
+     </TextBlock>
+    </Grid>
+    <TextBlock Grid.Column="2" Text="{Binding DisplayName}" FontSize="11" Foreground="#E8F0FB" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+   </Grid>
+  </DataTemplate>
+  <Style x:Key="AccountOption" TargetType="ComboBoxItem">
+   <Setter Property="AutomationProperties.Name" Value="{Binding DisplayName}"/>
+   <Setter Property="Foreground" Value="#E8F0FB"/><Setter Property="Padding" Value="8,6"/><Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ComboBoxItem"><Border x:Name="OptionBorder" CornerRadius="7" Padding="{TemplateBinding Padding}" Background="Transparent"><ContentPresenter/></Border>
+    <ControlTemplate.Triggers><Trigger Property="IsHighlighted" Value="True"><Setter TargetName="OptionBorder" Property="Background" Value="#30445E"/></Trigger><Trigger Property="IsSelected" Value="True"><Setter TargetName="OptionBorder" Property="Background" Value="#263D54"/></Trigger></ControlTemplate.Triggers>
+   </ControlTemplate></Setter.Value></Setter>
+  </Style>
+  <Style x:Key="AccountPicker" TargetType="ComboBox">
+   <Setter Property="ItemTemplate" Value="{StaticResource AccountItem}"/><Setter Property="ItemContainerStyle" Value="{StaticResource AccountOption}"/>
+   <Setter Property="HorizontalContentAlignment" Value="Stretch"/><Setter Property="Background" Value="#1B2A40"/>
+   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ComboBox">
+    <Grid>
+     <ToggleButton Focusable="False" IsChecked="{Binding IsDropDownOpen,RelativeSource={RelativeSource TemplatedParent},Mode=TwoWay}" ClickMode="Press">
+      <ToggleButton.Template><ControlTemplate TargetType="ToggleButton"><Border x:Name="AccountButton" Background="#1B2A40" CornerRadius="9" Padding="5,4"><Grid>
+       <ContentPresenter Content="{Binding SelectionBoxItem,RelativeSource={RelativeSource AncestorType=ComboBox}}" ContentTemplate="{Binding SelectionBoxItemTemplate,RelativeSource={RelativeSource AncestorType=ComboBox}}" VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="124"/>
+       <TextBlock Text="⌄" Foreground="#9CB0CE" VerticalAlignment="Center" HorizontalAlignment="Right" FontSize="12"/>
+      </Grid></Border><ControlTemplate.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="AccountButton" Property="Background" Value="#273B55"/></Trigger></ControlTemplate.Triggers></ControlTemplate></ToggleButton.Template>
+     </ToggleButton>
+     <Popup IsOpen="{TemplateBinding IsDropDownOpen}" Placement="Bottom" AllowsTransparency="True" Focusable="False" PopupAnimation="Fade">
+      <Border Background="#19283D" BorderBrush="#344D68" BorderThickness="1" CornerRadius="10" Padding="4" Width="232" Margin="0,4,0,0">
+       <ScrollViewer MaxHeight="260" CanContentScroll="True" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto"><ItemsPresenter KeyboardNavigation.DirectionalNavigation="Contained"/></ScrollViewer>
+      </Border>
+     </Popup>
+    </Grid>
+   </ControlTemplate></Setter.Value></Setter>
+  </Style>
+ </Window.Resources>
+ <Border x:Name="Surface" CornerRadius="18" Background="#111B2D" BorderBrush="#31415E" BorderThickness="1" Margin="6" Padding="18,15">
+  <Border.Effect><DropShadowEffect BlurRadius="12" ShadowDepth="2" Opacity="0.28"/></Border.Effect>
+  <Grid>
+   <Grid.RowDefinitions><RowDefinition Height="64"/><RowDefinition Height="174"/><RowDefinition Height="12"/><RowDefinition Height="132"/><RowDefinition Height="12"/><RowDefinition Height="140"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+   <Grid Grid.Row="0">
+    <Grid.RowDefinitions><RowDefinition Height="36"/><RowDefinition Height="22"/></Grid.RowDefinitions>
+    <Grid.ColumnDefinitions><ColumnDefinition Width="92"/><ColumnDefinition Width="*"/><ColumnDefinition Width="24"/><ColumnDefinition Width="24"/></Grid.ColumnDefinitions>
+    <StackPanel x:Name="DragHandle" Grid.Column="0" Cursor="SizeAll" VerticalAlignment="Center">
+     <TextBlock Text="Codex" FontSize="17" FontWeight="SemiBold"/>
+    </StackPanel>
+    <ComboBox x:Name="AccountScope" Grid.Column="0" Grid.ColumnSpan="4" Style="{StaticResource AccountPicker}" HorizontalAlignment="Center" VerticalAlignment="Center" Width="158" ToolTip="选择 Codex 账号；头像与名称只在本机显示"/>
+    <Button x:Name="Minimize" Grid.Column="2" Content="−" VerticalAlignment="Center" ToolTip="最小化"/>
+    <Button x:Name="CloseWindow" Grid.Column="3" Content="×" VerticalAlignment="Center" ToolTip="关闭悬浮窗，后台继续采集"/>
+    <TextBlock x:Name="WindowsScopeCaption" Grid.Row="1" Grid.ColumnSpan="4" Text="当前 Windows 用户" FontSize="10" Foreground="#7D91B3" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+   </Grid>
+   <Grid Grid.Row="1">
+    <Grid.RowDefinitions><RowDefinition/><RowDefinition Height="9"/><RowDefinition/></Grid.RowDefinitions>
+    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="9"/><ColumnDefinition/></Grid.ColumnDefinitions>
+    <Border Grid.Row="0" Grid.Column="0" Style="{StaticResource Card}" x:Name="Card5h"><StackPanel><TextBlock Text="最近 5 小时" Style="{StaticResource Period}"/><Viewbox Stretch="Uniform" StretchDirection="DownOnly" Width="116" Height="35" HorizontalAlignment="Left"><TextBlock x:Name="Value5h" Text="—" FontFamily="Segoe UI" FontSize="26" FontWeight="SemiBold"/></Viewbox></StackPanel></Border>
+    <Border Grid.Row="0" Grid.Column="2" Style="{StaticResource Card}" x:Name="CardToday"><StackPanel><TextBlock Text="今日" Style="{StaticResource Period}"/><Viewbox Stretch="Uniform" StretchDirection="DownOnly" Width="116" Height="35" HorizontalAlignment="Left"><TextBlock x:Name="ValueToday" Text="—" FontFamily="Segoe UI" FontSize="26" FontWeight="SemiBold"/></Viewbox></StackPanel></Border>
+    <Border Grid.Row="2" Grid.Column="0" Style="{StaticResource Card}" x:Name="CardWeek"><StackPanel><TextBlock Text="本周 · 周一起" Style="{StaticResource Period}"/><Viewbox Stretch="Uniform" StretchDirection="DownOnly" Width="116" Height="35" HorizontalAlignment="Left"><TextBlock x:Name="ValueWeek" Text="—" FontFamily="Segoe UI" FontSize="26" FontWeight="SemiBold"/></Viewbox></StackPanel></Border>
+    <Border Grid.Row="2" Grid.Column="2" Style="{StaticResource Card}" x:Name="CardMonth"><StackPanel><TextBlock Text="本月" Style="{StaticResource Period}"/><Viewbox Stretch="Uniform" StretchDirection="DownOnly" Width="116" Height="35" HorizontalAlignment="Left"><TextBlock x:Name="ValueMonth" Text="—" FontFamily="Segoe UI" FontSize="26" FontWeight="SemiBold"/></Viewbox></StackPanel></Border>
+   </Grid>
+   <Border Grid.Row="3" x:Name="ActiveBorder" Background="#162238" CornerRadius="12" Padding="13,10">
+    <Grid>
+     <Grid.RowDefinitions><RowDefinition Height="22"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+     <DockPanel><TextBlock Text="本用户活跃会话" FontSize="11" Foreground="#C5D2E7"/><TextBlock x:Name="ActiveCount" Text="正在读取…" FontSize="10" Foreground="#7D91B3" HorizontalAlignment="Right"/></DockPanel>
+     <ScrollViewer x:Name="ActiveScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"><StackPanel x:Name="ActiveList"/></ScrollViewer>
+     <TextBlock x:Name="ActiveEmpty" Grid.Row="1" Text="正在读取会话索引…" FontSize="11" Foreground="#7D91B3" VerticalAlignment="Center"/>
+    </Grid>
+   </Border>
+   <Border Grid.Row="5" Background="#162238" CornerRadius="12" Padding="13,10">
+    <StackPanel>
+     <DockPanel><TextBlock Text="USAGE · 账户额度" FontSize="10" Foreground="#9FB1CE"/><TextBlock Text="剩余" FontSize="10" Foreground="#7D91B3" HorizontalAlignment="Right"/></DockPanel>
+     <Grid Margin="0,8,0,0">
+      <Grid.RowDefinitions><RowDefinition Height="17"/><RowDefinition Height="17"/></Grid.RowDefinitions>
+      <Viewbox Width="220" Height="17" HorizontalAlignment="Left" Stretch="Uniform" StretchDirection="DownOnly"><TextBlock x:Name="QuotaPrimaryLabel" Text="主要额度（—）" FontSize="11" Foreground="#C5D2E7"/></Viewbox>
+      <TextBlock x:Name="QuotaPrimaryRemaining" Text="—" FontSize="13" FontWeight="SemiBold" HorizontalAlignment="Right" Foreground="#66DDB5"/>
+      <ProgressBar x:Name="QuotaPrimaryBar" Grid.Row="1" Width="90" Height="4" HorizontalAlignment="Left" VerticalAlignment="Center" Minimum="0" Maximum="100" Value="0" BorderThickness="0" Background="#293A54" Foreground="#66DDB5"/>
+      <TextBlock x:Name="QuotaPrimaryReset" Grid.Row="1" Text="额度暂不可用" FontSize="10" Foreground="#8EA4C3" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+     </Grid>
+     <Grid Margin="0,7,0,0">
+      <Grid.RowDefinitions><RowDefinition Height="17"/><RowDefinition Height="17"/></Grid.RowDefinitions>
+      <Viewbox Width="220" Height="17" HorizontalAlignment="Left" Stretch="Uniform" StretchDirection="DownOnly"><TextBlock x:Name="QuotaSecondaryLabel" Text="第二额度（—）" FontSize="11" Foreground="#C5D2E7"/></Viewbox>
+      <TextBlock x:Name="QuotaSecondaryRemaining" Text="—" FontSize="13" FontWeight="SemiBold" HorizontalAlignment="Right" Foreground="#66DDB5"/>
+      <ProgressBar x:Name="QuotaSecondaryBar" Grid.Row="1" Width="90" Height="4" HorizontalAlignment="Left" VerticalAlignment="Center" Minimum="0" Maximum="100" Value="0" BorderThickness="0" Background="#293A54" Foreground="#66DDB5"/>
+      <TextBlock x:Name="QuotaSecondaryReset" Grid.Row="1" Text="额度暂不可用" FontSize="10" Foreground="#8EA4C3" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+     </Grid>
+     <TextBlock x:Name="QuotaNote" Text="正在读取账户额度…" FontSize="9" Foreground="#637998" Margin="0,7,0,0"/>
+    </StackPanel>
+   </Border>
+   <StackPanel Grid.Row="6" Margin="0,13,0,0">
+    <DockPanel><Ellipse x:Name="StatusDot" Fill="#E8BF73" Width="6" Height="6" Margin="0,0,7,0"/><TextBlock x:Name="StatusText" Text="正在连接…" FontSize="11" Foreground="#C5D2E7"/><TextBlock x:Name="UpdatedText" Text="" HorizontalAlignment="Right" FontSize="10" Foreground="#7D91B3"/></DockPanel>
+    <TextBlock x:Name="CoverageText" Text="未导入启用前历史" FontSize="10" Foreground="#7D91B3" Margin="0,7,0,0"/>
+    <TextBlock x:Name="SinceText" Text="右键可暂停或退出" FontSize="10" Foreground="#637998" Margin="0,3,0,0"/>
+   </StackPanel>
+  </Grid>
+ </Border>
+</Window>

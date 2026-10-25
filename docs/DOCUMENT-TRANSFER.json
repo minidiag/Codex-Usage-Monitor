@@ -1,0 +1,95 @@
+{
+  "Date": "2026-10-25",
+  "Source": "C:\\Users\\<USERNAME>\\Documents\\Codex\\2026-10-25\\referenced-chatgpt-conversation-this-is-an\\outputs\\Codex-Telemetry-DD",
+  "Destination": "E:\\Codex\\Codex-Usage-Monitor\\docs\\Codex-Telemetry-DD",
+  "VerifiedFiles": 17,
+  "Files": [
+    {
+      "RelativePath": "DD.html",
+      "Length": 71921,
+      "SHA256": "4D9C0CD8DF997F3CF804B770512FC5A1558FE026F50DDDDC2532D08D2850606D"
+    },
+    {
+      "RelativePath": "DD.md",
+      "Length": 37916,
+      "SHA256": "0F8D15F7D7658A3CF1A082BCD3A685029B8DFD97A7AC837A3DF481C8CA4DD5CB"
+    },
+    {
+      "RelativePath": "openapi.json",
+      "Length": 25485,
+      "SHA256": "9E831928ED1B7FF17D786569B28856C573193BA778B83C6150E1CEB1EB3FFA77"
+    },
+    {
+      "RelativePath": "README.txt",
+      "Length": 524,
+      "SHA256": "BA5AB9D609F2483B08760158B60991D2400DDE0316C9830C332420E16FFA79A8"
+    },
+    {
+      "RelativePath": "schema.sql",
+      "Length": 5238,
+      "SHA256": "5493AC37EA29E5640FAD6A1D3CC5252029630A1E733CB98FD9F1357C2496086F"
+    },
+    {
+      "RelativePath": "diagrams\\01-architecture.mmd",
+      "Length": 470,
+      "SHA256": "989ABAAE0E751773A196265D4DF364E3B085BACF4D00C5DD3298F9118C93512A"
+    },
+    {
+      "RelativePath": "diagrams\\01-architecture.png",
+      "Length": 226623,
+      "SHA256": "B8136575097BD08B942AF70BC20A2258299A634B303657F0EC1F2BCF5AA68777"
+    },
+    {
+      "RelativePath": "diagrams\\01-architecture.svg",
+      "Length": 7795,
+      "SHA256": "E30FC6EFD88BDCD64E14287419A32C59D46007423F97A0A8E4B9F5D05A5A9F36"
+    },
+    {
+      "RelativePath": "diagrams\\02-ingestion-sequence.mmd",
+      "Length": 580,
+      "SHA256": "A7B0B9AE6DED7B06EC776A1E0C87DD2887D3C0DE3042A9A6F1AC3F907F219A44"
+    },
+    {
+      "RelativePath": "diagrams\\02-ingestion-sequence.png",
+      "Length": 135403,
+      "SHA256": "89E580E09DF6602D46E1CB1B454928F13792BE238E3867E4186343B34815D82A"
+    },
+    {
+      "RelativePath": "diagrams\\02-ingestion-sequence.svg",
+      "Length": 5004,
+      "SHA256": "3458B58AA5ACA031053D23CE2A0843274AA5B55C1C65351CDDDCC76B5836610F"
+    },
+    {
+      "RelativePath": "diagrams\\03-data-model.mmd",
+      "Length": 749,
+      "SHA256": "DAF64DDFD9FF9499E5202A1A73ADA19475E23980C00ADF5CF74169AC9B3251F0"
+    },
+    {
+      "RelativePath": "diagrams\\03-data-model.png",
+      "Length": 168648,
+      "SHA256": "96FEC18F7C58B23D0F3FD8CE44956CE3C74557342B131A1EAAA34EEF001F5B34"
+    },
+    {
+      "RelativePath": "diagrams\\03-data-model.svg",
+      "Length": 5539,
+      "SHA256": "4AF5344CF5E5159A1D926F30FB78DAA084250CA6AA35C34871C1B7F9EFA05146"
+    },
+    {
+      "RelativePath": "diagrams\\04-deployment.mmd",
+      "Length": 354,
+      "SHA256": "85617EB7528C347B267F807219C63EF5C0E4D3DFEDDE7DDAF6577432AB7237F0"
+    },
+    {
+      "RelativePath": "diagrams\\04-deployment.png",
+      "Length": 185957,
+      "SHA256": "D4F1A4044B5E6169BEABDF3465C274ACA1C94D66ACB30C1AC981F5842F8E1B44"
+    },
+    {
+      "RelativePath": "diagrams\\04-deployment.svg",
+      "Length": 5875,
+      "SHA256": "DC1632737E60933FB084A787600D01981E941EB26560546A63BD1E14C2F0FE38"
+    }
+  ],
+  "ArchiveSHA256": "332231D47F652BBD8E7B43964F727D97D2644B79ED75488431C9E8A10F8E8949",
+  "HandoffSHA256": "E31DACBF39FCCA4A525526B438EAC979C05D50F9DBAB2C3E23F0BAD7C5B15A39"
+}

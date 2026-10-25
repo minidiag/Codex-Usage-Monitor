@@ -1,0 +1,14 @@
+flowchart LR
+subgraph W[Windows 用户侧]
+S[本地 sessions 和 archived_sessions] --> A[来源适配器]
+A --> T[SQLite 事务 游标与 Outbox]
+T --> U[后台上传器]
+UI[Monitor 固定统计区]
+end
+subgraph R[远端统计服务]
+I[认证与批量接收] --> P[按流锁定 去重 连续归并]
+P --> DB[(PostgreSQL 原始检查点和派生增量)]
+DB --> Q[四窗口查询与质量状态]
+end
+U -->|HTTPS 批量上报| I
+Q -->|服务器确认值| UI

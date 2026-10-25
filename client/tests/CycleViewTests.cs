@@ -1,0 +1,35 @@
+using System;
+using System.Collections.Generic;
+
+internal static class CycleViewTests
+{
+    static int count;
+    static void Check(bool value,string label){if(!value)throw new Exception(label);count++;}
+    [STAThread]
+    static void Main()
+    {
+        var now=DateTimeOffset.Parse("2026-10-26T00:00:00Z");long reset=now.AddHours(3).ToUnixTimeSeconds();
+        string account=new string('a',64),principal=new string('b',64);
+        var totals=new Dictionary<string,object>{{"total","0"}};
+        var cycle=new Dictionary<string,object>{{"bucket","primary"},{"duration_mins","300"},{"resets_at",reset.ToString()},
+            {"starts_at",now.AddHours(-2).ToString("o")},{"ends_at",now.AddHours(3).ToString("o")},{"totals",totals}};
+        var response=new Dictionary<string,object>{{"account_key",account},{"principal_key",principal},{"as_of",now.ToString("o")},{"cycles",new object[]{cycle}}};
+        var data=new Dictionary<string,object>{{"accounts",new Dictionary<string,object>{{account,response}}}};
+        var value=CycleView.Read(data,account,principal,"primary",reset,300,now);
+        Check(value.Tokens=="0" && value.Fresh,"real zero is a valid fresh total");
+        totals["total"]="123456789012345678901234567890";
+        Check(CycleView.Read(data,account,principal,"primary",reset,300,now).Tokens=="123,456,789,012,345,678,901,234,567,890","large integers remain exact");
+        Check(CycleView.Read(data,account,new string('c',64),"primary",reset,300,now).Tokens=="—","other Windows user hidden");
+        Check(CycleView.Read(data,new string('d',64),principal,"primary",reset,300,now).Tokens=="—","other account hidden");
+        Check(CycleView.Read(data,account,principal,"secondary",reset,300,now).Tokens=="—","other bucket hidden");
+        Check(CycleView.Read(data,account,principal,"primary",reset+1,300,now).Tokens=="—","old reset period not reused");
+        Check(CycleView.Read(data,account,principal,"primary",reset,301,now).Tokens=="—","duration mismatch hidden");
+        response["as_of"]=now.AddSeconds(-40).ToString("o");value=CycleView.Read(data,account,principal,"primary",reset,300,now);
+        Check(!value.Fresh && value.Tokens!="—" && value.Hint.Contains("缓存"),"old data identified as cache");
+        response["as_of"]=now.ToString("o");cycle["ends_at"]=now.ToString("o");value=CycleView.Read(data,account,principal,"primary",reset,300,now);
+        Check(value.Ended && value.Tokens=="—","early reset hides previous period counter");
+        Check(CycleView.Read(null,account,principal,"primary",reset,300,now).Tokens=="—","missing data is not zero");
+        Check(CycleView.Read(data,account,principal,"primary",null,300,now).Tokens=="—","unknown reset is not guessed");
+        Console.WriteLine("Cycle view: "+count+" checks passed.");
+    }
+}

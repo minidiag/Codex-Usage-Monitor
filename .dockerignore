@@ -1,0 +1,6 @@
+.local
+.git
+docs
+**/__pycache__
+*.zip
+*.tar.gz

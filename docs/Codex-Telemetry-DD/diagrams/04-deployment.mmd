@@ -1,0 +1,12 @@
+flowchart LR
+subgraph W[Windows 用户环境]
+C[Collector 后台进程] --> L[(SQLite 队列)]
+M[Monitor 悬浮窗]
+end
+subgraph H[用户自控 Linux 主机]
+G[TLS 网关 公网仅 443] --> A[API 与流处理]
+A --> P[(私网 PostgreSQL)]
+end
+C -->|HTTPS 写入凭据| G
+M -->|HTTPS 只读凭据| G
+P -.->|加密备份| B[独立备份位置]
