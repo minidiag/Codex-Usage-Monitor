@@ -79,11 +79,11 @@ def account_metadata(home, key):
         return None, None
 
 
-def bound_quota(home,key):
+def bound_quota(home,key,network_path=None):
     from client.quota import QuotaError, read_quota
     def read(cancel):
         before, stamp = account_metadata(home,key)
-        result = read_quota(cancel,codex_home=home)
+        result = read_quota(cancel,codex_home=home,network_path=network_path)
         after, changed = account_metadata(home,key)
         if before != after or stamp != changed:
             raise QuotaError("account_changed")

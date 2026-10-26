@@ -1,6 +1,7 @@
 from datetime import datetime
 import io
 import json
+import os
 from pathlib import Path
 import tempfile
 import threading
@@ -8,7 +9,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-from client.quota import QuotaError, QuotaMonitor, normalize_quota, read_quota
+from client.quota import QuotaError, QuotaMonitor, normalize_quota, read_quota, quota_environment
 from client.agent import Agent
 from client.tests.test_collector import Fixture, FakeApi, KEY, TENANT
 from server.protocol import UTC
@@ -57,6 +58,40 @@ class QuotaNormalizationTests(unittest.TestCase):
 
 
 class MonitorTests(unittest.TestCase):
+    def test_saving_network_settings_refreshes_before_the_normal_interval(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            calls=[]
+            def reader(cancel):
+                calls.append(1)
+                return normalize_quota(payload())
+            monitor=QuotaMonitor(temporary,reader=reader)
+            try:
+                monitor.tick();monitor.worker.join(timeout=2)
+                self.assertEqual(len(calls),1)
+                monitor.network_path.write_text(json.dumps({'mode':'direct'}))
+                monitor.tick();monitor.worker.join(timeout=2)
+                self.assertEqual(len(calls),2)
+            finally:monitor.close()
+
+    def test_old_route_result_cannot_replace_cache_after_settings_change(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            monitor=QuotaMonitor(temporary,reader=lambda cancel:normalize_quota(payload(25)))
+            monitor._refresh();before=monitor.snapshot()
+            entered,release=threading.Event(),threading.Event()
+            def slow(cancel):
+                entered.set();release.wait(2)
+                return normalize_quota(payload(75))
+            monitor.reader=slow
+            try:
+                monitor.tick();self.assertTrue(entered.wait(1))
+                monitor.network_path.write_text(json.dumps({'mode':'direct'}))
+                release.set();monitor.worker.join(timeout=2)
+                self.assertEqual(monitor.snapshot(),before)
+                monitor.tick();monitor.worker.join(timeout=2)
+                self.assertEqual(monitor.snapshot()['windows'][0]['used_percent'],75)
+            finally:
+                release.set();monitor.close()
+
     def test_account_quota_stays_local_and_never_enters_telemetry_payloads(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -174,6 +209,66 @@ class FakeJob:
 
 
 class ReadOnlyProtocolTests(unittest.TestCase):
+    def test_direct_mode_bypasses_inherited_proxies_without_changing_parent(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path=Path(temporary)/'network.json';path.write_text(json.dumps({'mode':'direct'}))
+            with patch.dict(os.environ,{'HTTPS_PROXY':'http://old.invalid:7890','http_proxy':'http://old.invalid:7890','ALL_PROXY':'http://old.invalid:7890','NO_PROXY':'localhost'},clear=True):
+                child=quota_environment(network_path=path)
+                self.assertFalse(any(key.lower() in {'http_proxy','https_proxy','all_proxy'} for key in child))
+                self.assertEqual(child['NO_PROXY'],'*')
+                self.assertEqual(os.environ['NO_PROXY'],'localhost')
+
+    def test_environment_mode_preserves_inherited_proxy_and_bypass_rules(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path=Path(temporary)/'network.json';path.write_text(json.dumps({'mode':'environment'}))
+            with patch.dict(os.environ,{'HTTPS_PROXY':'http://existing.invalid:7890','NO_PROXY':'localhost'},clear=True):
+                self.assertEqual(quota_environment(network_path=path),dict(os.environ))
+
+    def test_desktop_without_proxy_environment_uses_saved_network_settings(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            settings = Path(temporary) / "quota-network.json"
+            settings.write_text(json.dumps({"proxy": "http://127.0.0.1:18789"}))
+            wire = json.dumps({"id": 1, "result": {}})+"\n"+json.dumps({"id": 2, "result": payload()})+"\n"
+            process = FakeProcess(wire)
+            with patch.dict(os.environ, {"NO_PROXY": "localhost"}, clear=True), \
+                    patch("client.quota.find_codex", return_value="codex.exe"), \
+                    patch("client.quota.subprocess.Popen", return_value=process) as factory, \
+                    patch("client.quota.WindowsJob", FakeJob):
+                read_quota(codex_home=Path(temporary)/"home", network_path=settings)
+                child = factory.call_args.kwargs["env"]
+                self.assertEqual(child["HTTPS_PROXY"], "http://127.0.0.1:18789")
+                self.assertEqual(child["HTTP_PROXY"], child["HTTPS_PROXY"])
+                self.assertEqual(child["CODEX_HOME"], str(Path(temporary)/"home"))
+                self.assertEqual(child["NO_PROXY"], "localhost")
+                self.assertNotIn("HTTPS_PROXY", os.environ)
+
+    def test_saved_proxy_replaces_inherited_variants_without_changing_parent(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            settings = Path(temporary)/"quota-network.json"
+            settings.write_text(json.dumps({"proxy": "http://127.0.0.1:18789"}))
+            with patch.dict(os.environ, {"https_proxy": "http://old.invalid:1234", "ALL_PROXY": "http://old.invalid:1234"}, clear=True):
+                child = quota_environment(network_path=settings)
+                self.assertNotIn("ALL_PROXY", child)
+                self.assertEqual([value for key, value in child.items() if key.lower()=="https_proxy"], ["http://127.0.0.1:18789"])
+                self.assertIn("http://old.invalid:1234", os.environ.values())
+
+    def test_invalid_proxy_settings_fail_without_starting_or_leaking_secrets(self):
+        cases = [[], {"proxy": None}, {"proxy": "http://user:secret@localhost:7890"},
+                 {"proxy": "file:///secret"}, {"proxy": "http://localhost:bad"},
+                 {"proxy": "http://localhost:7890/path"}, {"proxy": "http://localhost:7890", "token": "secret"}]
+        with tempfile.TemporaryDirectory() as temporary:
+            settings = Path(temporary)/"quota-network.json"
+            for value in cases:
+                with self.subTest(value=value), patch("client.quota.subprocess.Popen") as factory:
+                    settings.write_text(json.dumps(value))
+                    with self.assertRaisesRegex(QuotaError, "^quota_proxy_invalid$"):
+                        read_quota(network_path=settings)
+                    factory.assert_not_called()
+
+    def test_missing_network_file_keeps_existing_environment(self):
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ, {"HTTPS_PROXY": "http://existing.invalid:7890"}, clear=True):
+            self.assertEqual(quota_environment(network_path=Path(temporary)/"missing.json"), dict(os.environ))
+
     def test_reader_only_initializes_and_reads_limits_without_model_or_account_changes(self):
         wire = json.dumps({"id": 1, "result": {}})+"\n"+json.dumps({"id": 2, "result": payload()})+"\n"
         process = FakeProcess(wire)

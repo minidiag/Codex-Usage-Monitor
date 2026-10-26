@@ -19,6 +19,7 @@ from client.paths import state_path, credential_path
 from client.profiles import ProfilesMonitor
 from client.view_policy import window_filters
 from client.cycles import CycleMonitor
+from client.source_review import SourceReview
 from server.protocol import HEALTH_REASONS, UTC, iso
 
 
@@ -117,15 +118,17 @@ class Agent:
         self.paused = False
         self.last_upload = None
         self.homes = list(dict.fromkeys(h.resolve() for h in self.homes))
-        self.quota = QuotaMonitor(self.state,reader=bound_quota(self.homes[0],config["identity_key"])) if hasattr(self.api,"register_identity") else QuotaMonitor(self.state)
+        quota_network = self.state / "quota-network.json"
+        self.quota = QuotaMonitor(self.state,reader=bound_quota(self.homes[0],config["identity_key"],quota_network),network_path=quota_network) if hasattr(self.api,"register_identity") else QuotaMonitor(self.state)
         self.quotas = [self.quota]
         if hasattr(self.api,"register_identity"):
             for home in self.homes[1:]:
-                self.quotas.append(QuotaMonitor(self.state/"quotas"/self.ledger.identify(["quota-home",str(home)]),reader=bound_quota(home,config["identity_key"])))
+                self.quotas.append(QuotaMonitor(self.state/"quotas"/self.ledger.identify(["quota-home",str(home)]),reader=bound_quota(home,config["identity_key"],quota_network),network_path=quota_network))
         self.active_sessions = ActiveSessionReader(self.homes)
         self.identity = IdentityTracker(self.homes,config["identity_key"]) if hasattr(self.api,"register_identity") else None
         self.profiles=ProfilesMonitor(self.homes,config["identity_key"],self.state) if self.identity else None
         self.cycles=CycleMonitor(self.state,Api(config)) if hasattr(self.api,"record_quota_cycles") else None
+        self.source_review=SourceReview(self.state,self.ledger,self.api)
         self.identity_registered = False
         self.filters, self.catalog, self.last_catalog = {}, {}, 0
         if self.identity:
@@ -203,6 +206,7 @@ class Agent:
         else:desired={}
         if desired!=self.filters:
             self.filters,self.server_summary,self.last_summary=desired,None,0
+        self.source_review.tick()
         if self.paused:
             self.error = "paused"
             self.publish()

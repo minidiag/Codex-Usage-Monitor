@@ -20,7 +20,10 @@ internal static class QuotaViewTests
         Assert(!QuotaView.IsCurrent(now, now.ToUnixTimeSeconds()-1, now), "elapsed reset hides old percentage");
         Assert(QuotaView.Label(15, true) == "15 分钟额度", "actual duration not assumed five hours");
         Assert(QuotaView.Label(10080, false) == "每周额度", "weekly label");
-        Console.WriteLine("Quota view: 14 checks passed.");
+        Assert(QuotaView.FailureHint("quota_timeout").Contains("网络"), "timeout explains network cause even when a cache exists");
+        Assert(QuotaView.FailureHint("quota_proxy_invalid").Contains("代理"), "invalid proxy has actionable hint");
+        Assert(QuotaView.FailureHint("private-error-value") == "", "raw errors are not shown");
+        Console.WriteLine("Quota view: 17 checks passed.");
         return 0;
     }
 }

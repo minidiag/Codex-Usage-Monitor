@@ -44,6 +44,11 @@ class Ledger:
             wire TEXT NOT NULL,digest TEXT NOT NULL,acked INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY(stream_id,seq));
           CREATE INDEX IF NOT EXISTS pending_events ON events(acked,stream_id,seq);
+          CREATE TABLE IF NOT EXISTS source_exclusions(
+            path TEXT NOT NULL,stream_id TEXT NOT NULL,decision_id TEXT NOT NULL,
+            PRIMARY KEY(path,stream_id));
+          CREATE TABLE IF NOT EXISTS source_review_audit(
+            id TEXT PRIMARY KEY,created_at TEXT NOT NULL,stream_id TEXT NOT NULL,details TEXT NOT NULL);
         """)
         if "tail" not in {row[1] for row in self.db.execute("PRAGMA table_info(sources)")}:
             self.db.execute("ALTER TABLE sources ADD COLUMN tail TEXT NOT NULL DEFAULT ''")
@@ -121,7 +126,8 @@ class Ledger:
             handle.seek(start)
             tail = hashlib.sha256(handle.read(scan.offset-start)).hexdigest()
         with self.db:
-            if stream_id and not scan.unsupported:
+            excluded = stream_id and self.db.execute("SELECT 1 FROM source_exclusions WHERE path=? AND stream_id=?", (path,stream_id)).fetchone()
+            if stream_id and not scan.unsupported and not excluded:
                 stream = self.db.execute("SELECT * FROM streams WHERE id=?", (stream_id,)).fetchone()
                 if stream is None and scan.points:
                     point = scan.points[-1]
@@ -181,7 +187,8 @@ class Ledger:
 
     def rebase(self, stream_id, remote):
         """A second device locates the shared anchor in the full source, then replays identical sequence IDs."""
-        paths = self.db.execute("SELECT path FROM sources WHERE stream_id=?", (stream_id,)).fetchall()
+        paths = self.db.execute("""SELECT s.path FROM sources s WHERE s.stream_id=? AND NOT EXISTS
+            (SELECT 1 FROM source_exclusions e WHERE e.path=s.path AND e.stream_id=s.stream_id)""", (stream_id,)).fetchall()
         selected = None
         for row in paths:
             if not Path(row["path"]).exists():
@@ -260,12 +267,14 @@ class Ledger:
 
     def warnings(self):
         reasons = set()
-        for row in self.db.execute("SELECT warnings FROM sources"):
-            reasons.update(json.loads(row[0]))
+        active_sources = """SELECT s.* FROM sources s WHERE NOT EXISTS
+            (SELECT 1 FROM source_exclusions e WHERE e.path=s.path AND e.stream_id=s.stream_id)"""
+        for row in self.db.execute(active_sources):
+            reasons.update(json.loads(row["warnings"]))
         reasons.update(row[0] for row in self.db.execute("SELECT paused FROM streams WHERE paused IS NOT NULL"))
-        for row in self.db.execute("SELECT path,stream_id FROM sources"):
+        for row in self.db.execute(active_sources):
             if not Path(row["path"]).exists():
-                alternatives = self.db.execute("SELECT path FROM sources WHERE stream_id=?", (row["stream_id"],)).fetchall()
+                alternatives = self.db.execute(active_sources+" AND s.stream_id=?", (row["stream_id"],)).fetchall()
                 if not any(Path(p[0]).exists() for p in alternatives):
                     reasons.add("source_missing")
         return reasons

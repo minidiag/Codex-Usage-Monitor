@@ -96,12 +96,11 @@ internal static class FloatingWindowApp
                 string principal=Text(Get(Map(Get(Map(Get(data,"identity")),"subject")),"principal_key"));
                 string account=Text(Get(quota,"account_key"));
                 var cycle=CycleView.Read(Get(data,"quota_cycle_stats"),account,principal,key,reset,Numeric(Get(value,"duration_mins")),now);
-                if(cycle.Ended)current=false;
                 SetText("Quota" + suffix + "Label", QuotaView.Label(Numeric(Get(value, "duration_mins")), key == "primary")+"（"+cycle.Tokens+"）");
                 Widget<TextBlock>("Quota"+suffix+"Label").ToolTip=cycle.Hint;
                 Widget<TextBlock>("Quota"+suffix+"Label").Opacity=cycle.Fresh?1:0.65;
                 SetText("Quota" + suffix + "Remaining", QuotaView.Remaining(remaining, current));
-                SetText("Quota" + suffix + "Reset", cycle.Ended ? "等待额度刷新" : (value.Count == 0 ? "额度暂不可用" : QuotaView.Countdown(reset, now, fresh)));
+                SetText("Quota" + suffix + "Reset", value.Count == 0 ? "额度暂不可用" : QuotaView.Countdown(reset, now, fresh));
                 var bar = Widget<ProgressBar>("Quota" + suffix + "Bar");
                 bar.Value = current && remaining.HasValue ? Math.Max(0, Math.Min(100, remaining.Value)) : 0;
                 bar.Opacity = current ? 1 : 0.35;
@@ -115,7 +114,9 @@ internal static class FloatingWindowApp
             string error = Text(Get(quota, "error"));
             string note = "正在读取账户额度…";
             if (fetched.HasValue) note = fresh ? (error == "" ? "Codex 账户 · " : "缓存额度 · ") + fetched.Value.ToOffset(TimeSpan.FromHours(8)).ToString("HH:mm:ss") + " 更新" : "额度已过期，正在刷新";
-            else if (error != "") note = error == "codex_not_found" ? "未找到 Codex，额度暂不可用" : "额度读取失败，稍后重试";
+            else if (error != "") note = "额度读取失败，稍后重试";
+            string failure = QuotaView.FailureHint(error);
+            if(failure!="") note += " · " + failure;
             SetText("QuotaNote", note);
             if(selected=="") SetText("QuotaNote","本机当前登录 · "+note);
             else if(quota.Count==0) SetText("QuotaNote","所选账号暂无本机额度数据");
@@ -231,7 +232,7 @@ internal static class FloatingWindowApp
             else if (Convert.ToInt64(Get(last, "queued_records") ?? 0) > 0) message = "待上传 " + Text(Get(last, "queued_records")) + " 条";
             else if (Text(Get(summary, "quality")) == "complete") { message = "已同步"; color = "#66DDB5"; }
             if (Bool(Get(last, "running")) && fresh && !paused && error == "" && Convert.ToInt32(Get(last, "blocked_streams") ?? 0) > 0)
-            { message = "部分来源暂停，需检查"; color = "#F09A97"; }
+            { message = "部分来源暂停 · 点击核实"; color = "#F09A97"; }
             SetText("StatusText", message);
             Widget<Ellipse>("StatusDot").Fill = (Brush)new BrushConverter().ConvertFromString(color);
             pauseItem.Header = paused ? "继续采集和同步" : "暂停采集和同步";
@@ -279,7 +280,13 @@ internal static class FloatingWindowApp
                 pin.Click += delegate { window.Topmost = pin.IsChecked; };
                 var hide = new MenuItem { Header = "关闭窗口，后台继续采集" }; hide.Click += delegate { window.Close(); };
                 var exit = new MenuItem { Header = "停止采集并退出" }; exit.Click += delegate { File.WriteAllText(stop, "stop"); window.Close(); };
-                menu.Items.Add(pauseItem); menu.Items.Add(pin); menu.Items.Add(hide); menu.Items.Add(exit);
+                var review = new MenuItem { Header = "核实暂停来源…" };review.Click+=delegate {SourceReviewWindow.Show(window,state);};
+                var proxy = new MenuItem { Header = "额度代理设置…" };proxy.Click+=delegate {ProxySettingsWindow.Show(window,root,state);};
+                Widget<Button>("QuotaProxySettings").Click+=delegate {ProxySettingsWindow.Show(window,root,state);};
+                Widget<TextBlock>("StatusText").Cursor=Cursors.Hand;
+                Widget<TextBlock>("StatusText").ToolTip="点击打开来源核实与恢复，查看文件差异和可恢复条件。";
+                Widget<TextBlock>("StatusText").MouseLeftButtonUp+=delegate {SourceReviewWindow.Show(window,state);};
+                menu.Items.Add(pauseItem); menu.Items.Add(proxy); menu.Items.Add(review); menu.Items.Add(pin); menu.Items.Add(hide); menu.Items.Add(exit);
                 Widget<Border>("Surface").ContextMenu = menu;
                 AccountView.Attach(window,WriteControl,AccountPending,state);
                 timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };

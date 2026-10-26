@@ -1,4 +1,4 @@
-param([string]$CredentialImport,[string]$PythonExe,[string[]]$CodexHome)
+param([string]$CredentialImport,[string]$PythonExe,[string[]]$CodexHome,[string]$QuotaProxy)
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'Paths.ps1')
 if (-not $PythonExe) {
@@ -9,6 +9,15 @@ if (-not $PythonExe) { throw '请用 -PythonExe 指定当前用户可运行的 P
 $PythonExe=[IO.Path]::GetFullPath($PythonExe)
 & $PythonExe -c 'import sys;sys.exit(0 if sys.version_info >= (3,12) else 1)'
 if ($LASTEXITCODE -ne 0) { throw '需要当前用户可运行的 Python 3.12 或更新版本。' }
+if ($PSBoundParameters.ContainsKey('QuotaProxy') -and $QuotaProxy) {
+    $usageProxyUri=$null
+    if (-not [Uri]::TryCreate($QuotaProxy,[UriKind]::Absolute,[ref]$usageProxyUri) -or
+        $usageProxyUri.Scheme -notin @('http','https') -or -not $usageProxyUri.Host -or
+        $usageProxyUri.UserInfo -or $usageProxyUri.AbsolutePath -notin @('','/') -or
+        $usageProxyUri.Query -or $usageProxyUri.Fragment -or $QuotaProxy -match '\s') {
+        throw '额度代理需要不含用户名、密码或路径的 HTTP/HTTPS 代理地址。'
+    }
+}
 Push-Location -LiteralPath $usageProjectRoot
 try {
     if ($CredentialImport) { & $PythonExe -m client.install_user --import-credentials $CredentialImport }
@@ -17,6 +26,14 @@ try {
     $usagePythonWindow=Join-Path ([IO.Path]::GetDirectoryName($PythonExe)) 'pythonw.exe'
     if (-not (Test-Path -LiteralPath $usagePythonWindow)) { throw '同目录下未找到 pythonw.exe。' }
     [IO.File]::WriteAllText((Join-Path $usageState 'runtime.json'),(@{pythonw=$usagePythonWindow}|ConvertTo-Json),[Text.UTF8Encoding]::new($false))
+    if ($PSBoundParameters.ContainsKey('QuotaProxy')) {
+        $usageNetworkPath=Join-Path $usageState 'quota-network.json'
+        if ($QuotaProxy) {
+            [IO.File]::WriteAllText($usageNetworkPath,(@{proxy=$QuotaProxy}|ConvertTo-Json),[Text.UTF8Encoding]::new($false))
+        } elseif (Test-Path -LiteralPath $usageNetworkPath) {
+            Remove-Item -LiteralPath $usageNetworkPath
+        }
+    }
     if ($CodexHome) {
         $usageHomes=@($CodexHome | ForEach-Object { [IO.Path]::GetFullPath($_) })
         [IO.File]::WriteAllText((Join-Path $usageState 'sources.json'),(ConvertTo-Json -InputObject $usageHomes),[Text.UTF8Encoding]::new($false))

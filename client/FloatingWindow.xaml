@@ -83,7 +83,11 @@
    </Border>
    <Border Grid.Row="5" Background="#162238" CornerRadius="12" Padding="13,10">
     <StackPanel>
-     <DockPanel><TextBlock Text="USAGE · 账户额度" FontSize="10" Foreground="#9FB1CE"/><TextBlock Text="剩余" FontSize="10" Foreground="#7D91B3" HorizontalAlignment="Right"/></DockPanel>
+     <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+      <TextBlock Text="USAGE · 账户额度" FontSize="10" Foreground="#9FB1CE" VerticalAlignment="Center"/>
+      <Button x:Name="QuotaProxySettings" Grid.Column="1" Content="代理设置" FontSize="10" Padding="4,0" Margin="0,0,8,0" ToolTip="设置 Codex 额度读取的代理地址和连接方式"/>
+      <TextBlock Grid.Column="2" Text="剩余" FontSize="10" Foreground="#7D91B3" VerticalAlignment="Center"/>
+     </Grid>
      <Grid Margin="0,8,0,0">
       <Grid.RowDefinitions><RowDefinition Height="17"/><RowDefinition Height="17"/></Grid.RowDefinitions>
       <Viewbox Width="220" Height="17" HorizontalAlignment="Left" Stretch="Uniform" StretchDirection="DownOnly"><TextBlock x:Name="QuotaPrimaryLabel" Text="主要额度（—）" FontSize="11" Foreground="#C5D2E7"/></Viewbox>

@@ -11,6 +11,8 @@ $usageCompilerArgs+=(Join-Path $PSScriptRoot 'FloatingWindow.cs')
 $usageCompilerArgs+=(Join-Path $PSScriptRoot 'QuotaView.cs')
 $usageCompilerArgs+=(Join-Path $PSScriptRoot 'AccountView.cs')
 $usageCompilerArgs+=(Join-Path $PSScriptRoot 'CycleView.cs')
+$usageCompilerArgs+=(Join-Path $PSScriptRoot 'SourceReviewWindow.cs')
+$usageCompilerArgs+=(Join-Path $PSScriptRoot 'ProxySettingsWindow.cs')
 & $usageCompiler $usageCompilerArgs
 if ($LASTEXITCODE -ne 0) { throw '悬浮窗编译失败。' }
 Write-Output '桌面悬浮窗已构建。'

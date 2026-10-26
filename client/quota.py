@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import threading
 import time
+from urllib.parse import urlsplit
 
 from server.protocol import UTC, iso
 
@@ -115,13 +116,55 @@ class WindowsJob:
             self.handle = None
 
 
-def read_quota(cancel=None, timeout=18, codex_home=None):
+def validate_network_settings(settings):
+    if isinstance(settings, dict) and set(settings) == {"mode"} and isinstance(settings["mode"], str) and settings["mode"] in {"direct", "environment"}:
+        return settings
+    try:
+        if not isinstance(settings, dict) or set(settings) != {"proxy"} or not isinstance(settings["proxy"], str):
+            raise ValueError()
+        proxy = settings["proxy"]
+        parsed = urlsplit(proxy)
+        if (parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username is not None
+                or parsed.password is not None or parsed.path not in {"", "/"} or parsed.query or parsed.fragment
+                or (parsed.port is not None and not 1 <= parsed.port <= 65535)
+                or any(char.isspace() for char in proxy)):
+            raise ValueError()
+    except ValueError:
+        raise QuotaError("quota_proxy_invalid") from None
+    return settings
+
+
+def quota_environment(codex_home=None, network_path=None):
+    """Apply persisted routing only to the quota subprocess, never to telemetry."""
+    environment = os.environ.copy()
+    if codex_home is not None:
+        environment["CODEX_HOME"] = str(codex_home)
+    if network_path is None:
+        return environment
+    try:
+        settings = validate_network_settings(json.loads(Path(network_path).read_text(encoding="utf-8-sig")))
+    except FileNotFoundError:
+        return environment
+    except (OSError, ValueError):
+        raise QuotaError("quota_proxy_invalid") from None
+    if settings.get("mode") == "environment":
+        return environment
+    for name in list(environment):
+        if name.lower() in {"http_proxy", "https_proxy", "all_proxy"} or (settings.get("mode") == "direct" and name.lower() == "no_proxy"):
+            del environment[name]
+    if settings.get("mode") == "direct":
+        environment["NO_PROXY"] = "*"
+    else:
+        environment.update(HTTP_PROXY=settings["proxy"], HTTPS_PROXY=settings["proxy"])
+    return environment
+
+
+def read_quota(cancel=None, timeout=18, codex_home=None, network_path=None):
     cancel = cancel or threading.Event()
     if cancel.is_set():
         raise QuotaError("quota_cancelled")
     deadline = time.monotonic()+timeout
-    environment = os.environ.copy()
-    if codex_home is not None: environment["CODEX_HOME"] = str(codex_home)
+    environment = quota_environment(codex_home, network_path)
     process = subprocess.Popen([find_codex(), "app-server", "--stdio"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace", bufsize=1,
                                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0, env=environment)
@@ -195,10 +238,12 @@ def read_quota(cancel=None, timeout=18, codex_home=None):
 
 
 class QuotaMonitor:
-    def __init__(self, state, reader=None):
+    def __init__(self, state, reader=None, network_path=None):
         self.path = Path(state) / "quota-cache.json"
         self.path.parent.mkdir(parents=True,exist_ok=True)
-        self.reader = reader or read_quota
+        self.network_path = Path(network_path) if network_path is not None else self.path.parent / "quota-network.json"
+        self.reader = reader or (lambda cancel: read_quota(cancel, network_path=self.network_path))
+        self.network_stamp = self._network_stamp()
         self.cancel = threading.Event()
         self.lock = threading.Lock()
         self.worker = None
@@ -215,7 +260,17 @@ class QuotaMonitor:
         with self.lock:
             return dict(self.value)
 
+    def _network_stamp(self):
+        try:
+            stat = self.network_path.stat()
+            return stat.st_mtime_ns, stat.st_size
+        except OSError:
+            return None
+
     def tick(self):
+        network_stamp = self._network_stamp()
+        if network_stamp != self.network_stamp:
+            self.network_stamp, self.next_read = network_stamp, 0
         if self.cancel.is_set() or time.monotonic() < self.next_read or (self.worker and self.worker.is_alive()):
             return
         self.next_read = time.monotonic()+30
@@ -223,13 +278,17 @@ class QuotaMonitor:
         self.worker.start()
 
     def _refresh(self):
+        network_stamp = self._network_stamp()
         try:
             value = self.reader(self.cancel)
         except Exception as error:
             value = self.snapshot()
             allowed = {"quota_unavailable", "invalid_quota", "quota_timeout", "quota_cancelled",
-                       "codex_not_found", "quota_process_unavailable"}
+                       "codex_not_found", "quota_process_unavailable", "quota_proxy_invalid", "account_changed"}
             value["error"] = str(error) if isinstance(error, QuotaError) and str(error) in allowed else "quota_unavailable"
+        if network_stamp != self._network_stamp():
+            self.next_read = 0
+            return  # A result from the previous route cannot overwrite the new setting's cache.
         with self.lock:
             self.value = value
         try:

@@ -3,6 +3,19 @@ using System.Globalization;
 
 internal static class QuotaView
 {
+    internal static string FailureHint(string error)
+    {
+        switch(error)
+        {
+            case "quota_timeout": return "读取超时，请检查本机网络或额度代理";
+            case "quota_proxy_invalid": return "额度代理配置无效";
+            case "quota_unavailable": return "接口暂不可用，请检查网络和登录状态";
+            case "codex_not_found": return "未找到 Codex";
+            case "quota_process_unavailable": return "额度读取进程无法启动";
+            case "account_changed": return "账号已切换，正在重新读取";
+            default: return "";
+        }
+    }
     internal static bool IsFresh(DateTimeOffset? fetched, DateTimeOffset now)
     {
         if (!fetched.HasValue) return false;
