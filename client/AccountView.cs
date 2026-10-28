@@ -14,6 +14,8 @@ internal sealed class AccountChoice
     public string DisplayName {get;set;}
     public string Initials {get;set;}
     public ImageSource Avatar {get;set;}
+    public string AvatarHint {get;set;}
+    public string DisplayHint {get {return DisplayName+"\n"+AvatarHint;}}
     public bool HasAvatar {get {return Avatar!=null;}}
 }
 
@@ -57,7 +59,9 @@ internal static class AccountView
             string name=Text(Get(profile,"display_name"));
             if(String.IsNullOrWhiteSpace(name)) name="账号名称暂不可用";
             string initial=StringInfo.GetNextTextElement(name).ToUpperInvariant();
-            result.Add(new AccountChoice {Key=key,DisplayName=name,Initials=initial,Avatar=Avatar(Get(profile,"avatar_path"))});
+            var avatar=Avatar(Get(profile,"avatar_path"));
+            string hint=avatar==null?"未读取到头像，当前显示账户首字母":Text(Get(profile,"avatar_source"))=="cached_previous"?"该账户上次缓存的头像；新头像进入本机缓存后替换":"本机账户头像";
+            result.Add(new AccountChoice {Key=key,DisplayName=name,Initials=initial,Avatar=avatar,AvatarHint=hint});
         }
         result.Sort(delegate(AccountChoice a,AccountChoice b){return String.Compare(a.DisplayName,b.DisplayName,StringComparison.CurrentCulture);});
         result.Add(new AccountChoice {Key="",DisplayName="全部账号",Initials="∑"});

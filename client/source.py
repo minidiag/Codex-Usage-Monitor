@@ -1,6 +1,7 @@
 """Read only metadata and cumulative usage; never persist conversation content."""
 from dataclasses import dataclass, field
 import hashlib
+import io
 import json
 from pathlib import Path
 from uuid import UUID
@@ -38,81 +39,90 @@ class Scan:
 
 
 def read_source(path, offset=0, ordinal=-1, model="unknown", session=None, old_warnings=()):
+    with open(path, "rb") as handle:
+        return _read_source(handle, Path(path).stat().st_size, offset, ordinal, model, session, old_warnings)
+
+
+def read_source_data(data):
+    """Inspect bounded decompressed bytes in memory; never write conversation text to disk."""
+    return _read_source(io.BytesIO(data), len(data))
+
+
+def _read_source(handle, size, offset=0, ordinal=-1, model="unknown", session=None, old_warnings=()):
     result = Scan(session=session, offset=offset, ordinal=ordinal, model=model, warnings=set(old_warnings))
-    if Path(path).stat().st_size > MAX_FILE:
+    if size > MAX_FILE:
         result.warnings.add("unsupported_usage")
         result.unsupported = True
         return result
-    with open(path, "rb") as handle:
-        first_line = handle.readline(MAX_LINE + 1)
-        result.head = hashlib.sha256(first_line).hexdigest()
-        if offset:
-            handle.seek(offset)
-        else:
-            handle.seek(0)
-        while True:
-            start = handle.tell()
-            line = handle.readline(MAX_LINE + 1)
+    first_line = handle.readline(MAX_LINE + 1)
+    result.head = hashlib.sha256(first_line).hexdigest()
+    if offset:
+        handle.seek(offset)
+    else:
+        handle.seek(0)
+    while True:
+        start = handle.tell()
+        line = handle.readline(MAX_LINE + 1)
+        if not line:
+            break
+        if len(line) > MAX_LINE:
+            result.warnings.add("parse_failed")
+            while line and not line.endswith(b"\n"):
+                line = handle.readline(MAX_LINE + 1)
             if not line:
                 break
-            if len(line) > MAX_LINE:
-                result.warnings.add("parse_failed")
-                while line and not line.endswith(b"\n"):
-                    line = handle.readline(MAX_LINE + 1)
-                if not line:
-                    break
-                result.offset = handle.tell()
-                continue
-            if not line.endswith(b"\n"):
-                # A writer can be in the middle of one JSON line. Re-read it next time.
-                result.offset = start
-                break
             result.offset = handle.tell()
-            try:
-                record = json.loads(line)
-                if not isinstance(record, dict):
-                    raise ValueError()
-                kind = record.get("type")
-                payload = record.get("payload") or {}
-                if kind == "session_meta":
-                    raw_id = payload.get("id") or payload.get("session_id")
-                    result.session = str(UUID(raw_id))
-                    source = payload.get("source")
-                    thread_source = payload.get("thread_source")
-                    inherited = any(payload.get(k) for k in ("forked_from_id", "parent_thread_id", "parent_session_id"))
-                    if (not isinstance(source, str) or source not in {"vscode", "cli", "exec", "app_server", "appServer"}
-                            or inherited or isinstance(thread_source, dict)
-                            or (isinstance(thread_source, str) and any(x in thread_source.lower() for x in ("subagent", "spawn", "fork")))):
-                        result.unsupported = True
-                        result.warnings.add("unsupported_usage")
-                elif kind == "turn_context":
-                    candidate = payload.get("model")
-                    if isinstance(candidate, str) and 1 <= len(candidate) <= 128 and all(ord(c) >= 32 for c in candidate):
-                        result.model = candidate
-                elif kind in {"compacted", "context_compacted"}:
-                    # Supplemental remote-compaction accounting needs a separate adapter.
+            continue
+        if not line.endswith(b"\n"):
+            # A writer can be in the middle of one JSON line. Re-read it next time.
+            result.offset = start
+            break
+        result.offset = handle.tell()
+        try:
+            record = json.loads(line)
+            if not isinstance(record, dict):
+                raise ValueError()
+            kind = record.get("type")
+            payload = record.get("payload") or {}
+            if kind == "session_meta":
+                raw_id = payload.get("id") or payload.get("session_id")
+                result.session = str(UUID(raw_id))
+                source = payload.get("source")
+                thread_source = payload.get("thread_source")
+                inherited = any(payload.get(k) for k in ("forked_from_id", "parent_thread_id", "parent_session_id"))
+                if (not isinstance(source, str) or source not in {"vscode", "cli", "exec", "app_server", "appServer"}
+                        or inherited or isinstance(thread_source, dict)
+                        or (isinstance(thread_source, str) and any(x in thread_source.lower() for x in ("subagent", "spawn", "fork")))):
+                    result.unsupported = True
                     result.warnings.add("unsupported_usage")
-                elif kind == "event_msg" and payload.get("type") == "token_count":
-                    info = payload.get("info")
-                    if info is None:
-                        continue  # A rate-limit-only update has no usage checkpoint.
-                    vector = info.get("total_token_usage")
-                    if not isinstance(vector, dict):
-                        raise ValueError()
-                    values = tuple(vector.get(k) for k in SOURCE_COUNTERS)
-                    if any(type(v) is not int or not 0 <= v <= MAX_INT for v in values):
-                        raise ValueError()
-                    if values[1] > values[0] or values[3] > values[2]:
-                        raise ValueError()
-                    if "total_tokens" in vector and vector["total_tokens"] != values[0] + values[2]:
-                        raise ValueError()
-                    result.ordinal += 1
-                    result.points.append(Point(result.ordinal, iso(timestamp(record.get("timestamp"))), result.model,
-                                               dict(zip(COUNTERS, map(str, values)))))
-                    if result.model == "unknown":
-                        result.warnings.add("unsupported_usage")
-            except (ApiError, ValueError, TypeError, AttributeError, KeyError, OverflowError):
-                result.warnings.add("parse_failed")
+            elif kind == "turn_context":
+                candidate = payload.get("model")
+                if isinstance(candidate, str) and 1 <= len(candidate) <= 128 and all(ord(c) >= 32 for c in candidate):
+                    result.model = candidate
+            elif kind in {"compacted", "context_compacted"}:
+                # Supplemental remote-compaction accounting needs a separate adapter.
+                result.warnings.add("unsupported_usage")
+            elif kind == "event_msg" and payload.get("type") == "token_count":
+                info = payload.get("info")
+                if info is None:
+                    continue  # A rate-limit-only update has no usage checkpoint.
+                vector = info.get("total_token_usage")
+                if not isinstance(vector, dict):
+                    raise ValueError()
+                values = tuple(vector.get(k) for k in SOURCE_COUNTERS)
+                if any(type(v) is not int or not 0 <= v <= MAX_INT for v in values):
+                    raise ValueError()
+                if values[1] > values[0] or values[3] > values[2]:
+                    raise ValueError()
+                if "total_tokens" in vector and vector["total_tokens"] != values[0] + values[2]:
+                    raise ValueError()
+                result.ordinal += 1
+                result.points.append(Point(result.ordinal, iso(timestamp(record.get("timestamp"))), result.model,
+                                           dict(zip(COUNTERS, map(str, values)))))
+                if result.model == "unknown":
+                    result.warnings.add("unsupported_usage")
+        except (ApiError, ValueError, TypeError, AttributeError, KeyError, OverflowError, RecursionError):
+            result.warnings.add("parse_failed")
     if result.session is None:
         result.warnings.add("unknown_identity")
     return result

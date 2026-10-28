@@ -2,6 +2,7 @@
 import argparse
 from datetime import datetime
 import hashlib
+import getpass
 import json
 import os
 from pathlib import Path
@@ -25,6 +26,9 @@ MESSAGES = {
     "not_registered": "来源未登记在当前采集器，拒绝恢复。",
     "invalid_request": "核实请求无效，请重新打开核实窗口。",
     "review_failed": "核实未完成，请重新核实；未改变采集账本。",
+    "alert_closed": "已关闭此来源当前问题的告警，保留覆盖缺口、历史数据和待传记录；来源变化后会重新告警。",
+    "alert_reopened": "已重新打开此来源告警；采集和上传仍遵守原有校验规则。",
+    "reason_required": "请填写 1 至 200 字的关闭原因。",
 }
 
 
@@ -55,8 +59,10 @@ def file_hash(path):
 
 
 class SourceReview:
-    def __init__(self, state, ledger, api):
+    def __init__(self, state, ledger, api, homes=(), inventory=None):
         self.state, self.ledger, self.api = Path(state), ledger, api
+        self.homes = list(map(Path, homes))
+        self.inventory=inventory
         self.request_path = self.state / "source-review-request.json"
         self.report_path = self.state / "source-review.json"
 
@@ -89,13 +95,16 @@ class SourceReview:
                       retained_records=len(events), server=server, sources=[], auto_source_id=None)
         scans = {}
         for row in self.ledger.db.execute("SELECT * FROM sources WHERE stream_id=? ORDER BY path", (stream["id"],)):
+            if self.ledger.existing_only() and not self.ledger.db.execute("SELECT 1 FROM source_presence WHERE present=1 AND path IN (?,?)",(row['path'],row['path']+'.zst')).fetchone():
+                continue
             path = Path(row["path"])
             item = dict(source_id=source_id(path), path=str(path), eligible=False, exists=path.exists(),
                         excluded=bool(self.ledger.db.execute("SELECT 1 FROM source_exclusions WHERE path=? AND stream_id=?", (str(path), stream["id"])).fetchone()),
                         points=0, anchor_matches=False, records_match=False, issues=[])
             report["sources"].append(item)
             if not item["exists"]:
-                item["issues"].append("文件不存在，需要找回日志或选择已迁移的完整副本。")
+                item["issues"].append("原文件已压缩，请查看下方压缩来源核实结果。" if Path(str(path)+".zst").is_file()
+                                      else "文件不存在，需要找回日志或选择已迁移的完整副本。")
                 continue
             try:
                 before = path.stat()
@@ -173,12 +182,20 @@ class SourceReview:
 
     def build_report(self, request_id, code="inspected", details=None):
         streams = []
-        for stream in self.ledger.db.execute("SELECT * FROM streams WHERE paused IS NOT NULL ORDER BY rowid").fetchall():
+        for stream in self.ledger.paused_sources():
             streams.append(self.inspect_stream(stream)[0])
         audit = [dict(id=row["id"], created_at=row["created_at"], **json.loads(row["details"]))
                  for row in self.ledger.db.execute("SELECT * FROM source_review_audit ORDER BY rowid DESC LIMIT 20")]
+        compressed = self.inventory.compressed() if self.inventory else [path for home in self.homes for name in ("sessions", "archived_sessions")
+                      for path in (home/name).rglob("*.jsonl.zst")]
+        health = self.ledger.source_health(compressed, refresh=code=='inspected')
+        alert_audit = [dict(id=row["id"], action=row["action"], created_at=row["created_at"],
+                            stream_id=row["stream_id"], closure_id=row["closure_id"], **json.loads(row["details"]))
+                       for row in self.ledger.db.execute("SELECT * FROM source_alert_audit ORDER BY rowid DESC LIMIT 30")]
         report = dict(version=1, revision=str(uuid.uuid4()), generated_at=iso(datetime.now(UTC)), request_id=request_id,
-                      result=dict(code=code, message=MESSAGES.get(code, MESSAGES["review_failed"]), details=details or []), streams=streams, audit=audit)
+                      result=dict(code=code, message=MESSAGES.get(code, MESSAGES["review_failed"]), details=details or []), streams=streams, audit=audit, source_health=health, alert_audit=alert_audit)
+        report['source_changes']=[dict(row) for row in self.ledger.db.execute('SELECT * FROM source_changes ORDER BY id DESC LIMIT 50')]
+        report['source_tracking']=self.inventory.snapshot() if self.inventory else {}
         atomic_json(self.report_path, report)
         lines = ["# 本地来源核实报告", "", "更新时间：" + report["generated_at"], "", report["result"]["message"],
                  "", "本报告只保存在本机；包含日志路径和用量定位信息，请勿公开。", ""]
@@ -191,8 +208,75 @@ class SourceReview:
         lines.extend(["## 已执行的来源选择", ""])
         for decision in audit:
             lines.extend(["- " + decision["created_at"] + "：`" + decision["selected_path"] + "`；排除其他文件 " + str(len(decision["excluded_paths"])) + " 个。备份：`" + decision["backup"] + "`。"])
+        lines.extend(["", "## 压缩与缺失来源", "", "核实只读取本机数据，不新增、删除或覆盖用量事件。", ""])
+        for item in health["archives"]:
+            lines.extend(["- 压缩文件：`"+item["path"]+"`", "  原文件：`"+item["original_path"]+"`",
+                          "  "+item["message"]+"；待传 "+str(item["pending"])+" 条。", ""])
+        for item in health["missing"]:
+            lines.extend(["- 缺失文件：`"+item["path"]+"`；未找到可用副本，请恢复原文件或检查来源目录。", ""])
+        for item in health["unregistered_archives"]:
+            lines.extend(["- 未登记压缩文件：`"+item["path"]+"`；"+item["message"], ""])
+        lines.extend(["## 来源告警与已确认覆盖缺口", "", "关闭只停止当前问题的重复告警，不删除记录、不解除暂停、不修补缺口；来源变化会重新告警。", ""])
+        for item in health["active_alerts"]:
+            lines.extend(["- 待处理："+item["message"]+"；待传 "+str(item["pending"])+" 条；最后已采集时间 "+str(item["last_record_at"]),
+                          "  路径："+"；".join(item["paths"]), ""])
+        for item in health["closed_alerts"]:
+            lines.extend(["- 已关闭："+item["closed_at"]+"；原因："+item["reason"], "  路径："+"；".join(item["paths"]), ""])
+        lines.extend(["## 告警操作记录", ""])
+        for entry in alert_audit:
+            lines.extend(["- "+entry["created_at"]+" · "+entry["action"]+" · "+entry.get("reason",entry.get("message","")),
+                          "  备份："+entry.get("backup","自动状态变更，不修改用量记录"), ""])
+        lines.extend(['## 来源文件变化记录','','只记录采集器观察到的路径变化；无法可靠追溯执行者或删除意图。消失的路径移出活动追踪，历史用量保留。',''])
+        for entry in report['source_changes']:
+            lines.extend(['- '+entry['observed_at']+' · '+entry['kind']+' · `'+entry['path']+'`',
+                          '  '+entry['message']+(' 关联路径：`'+entry['related_path']+'`' if entry['related_path'] else ''),''])
         (self.state / "source-review.md").write_text("\n".join(lines), encoding="utf-8")
         return report
+
+    def _alert_action(self, request):
+        receipt = self.ledger.db.execute("SELECT details FROM source_alert_audit WHERE id=?", (request["id"],)).fetchone()
+        if receipt:
+            return json.loads(receipt[0])
+        saved = json.loads(self.report_path.read_text(encoding="utf-8"))
+        if saved.get("revision") != request.get("revision"):
+            raise ReviewError("stale_review")
+        action, stream_id_value = request["action"], request.get("stream_id")
+        health = self.ledger.source_health()
+        collection = "active_alerts" if action == "close_alert" else "closed_alerts"
+        old = next((item for item in saved.get("source_health",{}).get(collection,[]) if item["stream_id"] == stream_id_value),None)
+        current = next((item for item in health[collection] if item["stream_id"] == stream_id_value),None)
+        if not old or not current or old["fingerprint"] != request.get("fingerprint") or current["fingerprint"] != request.get("fingerprint"):
+            raise ReviewError("stale_review")
+        reason = request.get("reason", "")
+        if action == "close_alert" and (not isinstance(reason,str) or not 1 <= len(reason.strip()) <= 200 or any(ord(char)<32 for char in reason)):
+            raise ReviewError("reason_required")
+        if action == "reopen_alert" and (old.get("closure_id") != request.get("closure_id") or current.get("closure_id") != request.get("closure_id")):
+            raise ReviewError("stale_review")
+        backup_dir = self.state/"source-review-backups"
+        backup_dir.mkdir(exist_ok=True)
+        backup = backup_dir/("alert-"+request["id"]+".sqlite3")
+        if backup.exists():
+            raise ReviewError("stale_review")
+        destination = sqlite3.connect(backup)
+        try:self.ledger.db.backup(destination)
+        finally:destination.close()
+        # Re-check after the backup; files can change independently of the agent thread.
+        fresh = next((item for item in self.ledger.source_health()[collection] if item["stream_id"] == stream_id_value),None)
+        if not fresh or fresh["fingerprint"] != current["fingerprint"]:
+            raise ReviewError("stale_review")
+        now = iso(datetime.now(UTC))
+        closure_id = request["id"] if action == "close_alert" else current["closure_id"]
+        details = dict(reason=reason.strip() if action == "close_alert" else current["reason"],
+                       actor=getpass.getuser(), backup=str(backup), snapshot=current)
+        with self.ledger.db:
+            if action == "close_alert":
+                self.ledger.db.execute("INSERT INTO source_alert_closures VALUES(?,?,?,?,?,?,NULL)",
+                    (closure_id,stream_id_value,current["fingerprint"],now,details["reason"],compact(current)))
+            else:
+                self.ledger.db.execute("UPDATE source_alert_closures SET reopened_at=? WHERE id=? AND reopened_at IS NULL",(now,closure_id))
+            self.ledger.db.execute("INSERT INTO source_alert_audit VALUES(?,?,?,?,?,?)",
+                (request["id"],"close" if action == "close_alert" else "reopen",now,stream_id_value,closure_id,compact(details)))
+        return details
 
     def _apply(self, stream_id_value, selected_id, fingerprint, decision_id, automatic=False):
         previous = self.ledger.db.execute("SELECT details FROM source_review_audit WHERE id=?", (decision_id,)).fetchone()
@@ -252,7 +336,10 @@ class SourceReview:
         details = []
         code = "inspected"
         try:
-            if action == "resume":
+            if action in {"close_alert", "reopen_alert"}:
+                details.append(self._alert_action(dict(request,id=request_id)))
+                code = "alert_closed" if action == "close_alert" else "alert_reopened"
+            elif action == "resume":
                 saved = json.loads(self.report_path.read_text(encoding="utf-8"))
                 # A durable audit receipt makes repeating a completed request harmless.
                 receipt = self.ledger.db.execute("SELECT 1 FROM source_review_audit WHERE id=?", (request_id,)).fetchone()
@@ -266,7 +353,7 @@ class SourceReview:
                 details.append(self._apply(request["stream_id"], request["source_id"], request["fingerprint"], request_id))
                 code = "resumed"
             elif action == "auto":
-                for stream in self.ledger.db.execute("SELECT * FROM streams WHERE paused IS NOT NULL ORDER BY rowid").fetchall():
+                for stream in self.ledger.paused_sources():
                     report, _ = self.inspect_stream(stream)
                     if report["auto_source_id"]:
                         item = next(item for item in report["sources"] if item["source_id"] == report["auto_source_id"])
@@ -299,9 +386,10 @@ class SourceReview:
 
 def main():
     parser = argparse.ArgumentParser(description="请求运行中的采集器核实来源，报告仅保存在本机。")
-    parser.add_argument("--action", choices=("inspect", "auto", "resume"), default="inspect")
+    parser.add_argument("--action", choices=("inspect", "auto", "resume", "close_alert", "reopen_alert"), default="inspect")
     parser.add_argument("--stream")
     parser.add_argument("--source")
+    parser.add_argument("--reason")
     parser.add_argument("--wait", type=float, default=40)
     args = parser.parse_args()
     state = state_path()
@@ -313,6 +401,12 @@ def main():
         if not item:
             parser.error("请先核实并从报告中选择来源。")
         request.update(stream_id=args.stream, source_id=args.source, revision=saved["revision"], fingerprint=item.get("fingerprint"))
+    elif args.action in {"close_alert","reopen_alert"}:
+        saved = json.loads((state/"source-review.json").read_text(encoding="utf-8"))
+        key = "active_alerts" if args.action == "close_alert" else "closed_alerts"
+        item = next((item for item in saved.get("source_health",{}).get(key,[]) if item["stream_id"] == args.stream),None)
+        if not item:parser.error("请先核实并从报告中选择当前告警或已关闭告警。")
+        request.update(stream_id=args.stream,revision=saved["revision"],fingerprint=item["fingerprint"],closure_id=item.get("closure_id"),reason=args.reason)
     atomic_json(state / "source-review-request.json", request)
     deadline = time.monotonic() + max(0, min(args.wait, 55))
     while time.monotonic() < deadline:
@@ -322,7 +416,7 @@ def main():
                 print(report["result"]["message"])
                 print("待核实来源：" + str(len(report["streams"])))
                 print("本地报告：" + str(state / "source-review.md"))
-                return 0 if report["result"]["code"] in {"inspected", "resumed", "auto_complete"} else 1
+                return 0 if report["result"]["code"] in {"inspected", "resumed", "auto_complete", "alert_closed", "alert_reopened"} else 1
         except (OSError, ValueError):
             pass
         time.sleep(0.2)

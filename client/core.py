@@ -49,6 +49,22 @@ class Ledger:
             PRIMARY KEY(path,stream_id));
           CREATE TABLE IF NOT EXISTS source_review_audit(
             id TEXT PRIMARY KEY,created_at TEXT NOT NULL,stream_id TEXT NOT NULL,details TEXT NOT NULL);
+          CREATE TABLE IF NOT EXISTS archive_checks(
+            path TEXT PRIMARY KEY,fingerprint TEXT NOT NULL,result TEXT NOT NULL);
+          CREATE TABLE IF NOT EXISTS source_alert_closures(
+            id TEXT PRIMARY KEY,stream_id TEXT NOT NULL,fingerprint TEXT NOT NULL,
+            closed_at TEXT NOT NULL,reason TEXT NOT NULL,snapshot TEXT NOT NULL,reopened_at TEXT);
+          CREATE UNIQUE INDEX IF NOT EXISTS active_source_alert_closure
+            ON source_alert_closures(stream_id) WHERE reopened_at IS NULL;
+          CREATE TABLE IF NOT EXISTS source_alert_audit(
+            id TEXT PRIMARY KEY,action TEXT NOT NULL,created_at TEXT NOT NULL,
+            stream_id TEXT NOT NULL,closure_id TEXT NOT NULL,details TEXT NOT NULL);
+          CREATE TABLE IF NOT EXISTS source_presence(
+            path TEXT PRIMARY KEY,present INTEGER NOT NULL,kind TEXT NOT NULL,observed_at TEXT NOT NULL);
+          CREATE INDEX IF NOT EXISTS current_source_presence ON source_presence(present,path);
+          CREATE TABLE IF NOT EXISTS source_changes(
+            id INTEGER PRIMARY KEY,observed_at TEXT NOT NULL,kind TEXT NOT NULL,
+            path TEXT NOT NULL,related_path TEXT,message TEXT NOT NULL);
         """)
         if "tail" not in {row[1] for row in self.db.execute("PRAGMA table_info(sources)")}:
             self.db.execute("ALTER TABLE sources ADD COLUMN tail TEXT NOT NULL DEFAULT ''")
@@ -101,11 +117,11 @@ class Ledger:
                         (stream, int(record["source_seq"]), record["event_id"], compact(record), digest))
         return True
 
-    def scan_file(self, path):
+    def scan_file(self, path, force=False):
         path = str(Path(path).resolve())
         stat = Path(path).stat()
         prior = self.db.execute("SELECT * FROM sources WHERE path=?", (path,)).fetchone()
-        if prior and prior["mtime"] == stat.st_mtime_ns and prior["size"] == stat.st_size:
+        if not force and prior and prior["mtime"] == stat.st_mtime_ns and prior["size"] == stat.st_size:
             return
         reset = prior is None or stat.st_size < prior["offset"]
         if prior and not reset:
@@ -265,16 +281,39 @@ class Ledger:
             if replay:
                 self.db.execute("UPDATE events SET acked=0 WHERE stream_id=?", (stream_id,))
 
-    def warnings(self):
-        reasons = set()
-        active_sources = """SELECT s.* FROM sources s WHERE NOT EXISTS
+    def source_health(self, compressed_paths=(), refresh=False):
+        from client.source_archives import source_health
+        return source_health(self, compressed_paths, refresh)
+
+    def existing_only(self):
+        return self.db.execute("SELECT 1 FROM meta WHERE key='source_tracking' AND value='existing'").fetchone() is not None
+
+    def source_rows(self):
+        query = """SELECT s.* FROM sources s WHERE NOT EXISTS
             (SELECT 1 FROM source_exclusions e WHERE e.path=s.path AND e.stream_id=s.stream_id)"""
-        for row in self.db.execute(active_sources):
+        if self.existing_only():
+            query += """ AND EXISTS (SELECT 1 FROM source_presence p
+                WHERE p.present=1 AND (p.path=s.path OR p.path=s.path||'.zst'))"""
+        return self.db.execute(query).fetchall()
+
+    def paused_sources(self):
+        active = {row['stream_id'] for row in self.source_rows()} if self.existing_only() else None
+        return [row for row in self.db.execute("SELECT * FROM streams WHERE paused IS NOT NULL")
+                if active is None or row['id'] in active]
+
+    def warnings(self, health=None):
+        reasons = set()
+        for row in self.source_rows():
             reasons.update(json.loads(row["warnings"]))
-        reasons.update(row[0] for row in self.db.execute("SELECT paused FROM streams WHERE paused IS NOT NULL"))
-        for row in self.db.execute(active_sources):
-            if not Path(row["path"]).exists():
-                alternatives = self.db.execute(active_sources+" AND s.stream_id=?", (row["stream_id"],)).fetchall()
-                if not any(Path(p[0]).exists() for p in alternatives):
-                    reasons.add("source_missing")
+        reasons.update(row['paused'] for row in self.paused_sources())
+        if self.existing_only() and self.db.execute("SELECT 1 FROM source_presence WHERE present=0 LIMIT 1").fetchone():
+            # Coverage remains partial even though retired paths are no longer active alarms.
+            reasons.add("retired_source_history")
+        health = health if health is not None else self.source_health()
+        if health["missing"]:
+            reasons.add("source_missing")
+        if health["unverified_archives"]:
+            reasons.update({"compressed_source_unverified", "unsupported_usage"})
+        if health["unregistered_archives"]:
+            reasons.add("unsupported_usage")
         return reasons

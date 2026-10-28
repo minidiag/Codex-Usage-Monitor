@@ -226,17 +226,27 @@ internal static class FloatingWindowApp
                 if (error == "authentication_failed") message = "凭据需要更新";
                 else if (error == "queue_full") message = "本地队列已满，采集暂停";
                 else if (error == "collector_error" || error == "scan_failed") message = "采集异常，请查看本地状态";
-                else if (error == "source_missing") message = "未找到采集来源";
+                else if (error == "source_missing") message = "部分来源缺失 · 点击处理";
+                else if (error == "source_directory_missing") message = "采集目录不存在 · 点击查看";
+                else if (error == "compressed_source_unverified") message = "压缩来源待核实 · 点击查看";
                 else if (error == "subject_unavailable") message = "当前 Windows 用户暂不可识别";
             }
             else if (Convert.ToInt64(Get(last, "queued_records") ?? 0) > 0) message = "待上传 " + Text(Get(last, "queued_records")) + " 条";
             else if (Text(Get(summary, "quality")) == "complete") { message = "已同步"; color = "#66DDB5"; }
             if (Bool(Get(last, "running")) && fresh && !paused && error == "" && Convert.ToInt32(Get(last, "blocked_streams") ?? 0) > 0)
             { message = "部分来源暂停 · 点击核实"; color = "#F09A97"; }
+            var sourceHealth=Map(Get(last,"source_health"));
+            int archived=Convert.ToInt32(Get(sourceHealth,"synced_archives") ?? 0);
+            int closedAlerts=Convert.ToInt32(Get(sourceHealth,"closed_alert_count") ?? 0);
+            if(Bool(Get(last,"running")) && fresh && !paused && error=="" && Convert.ToInt32(Get(last,"blocked_streams") ?? 0)==0 && Convert.ToInt64(Get(last,"queued_records") ?? 0)==0 && archived>0)
+                message="已同步 · "+archived+" 个历史来源已压缩";
+            if(Bool(Get(last,"running")) && fresh && !paused && error=="" && Convert.ToInt32(Get(sourceHealth,"active_alert_count") ?? 0)==0 && Convert.ToInt64(Get(last,"queued_records") ?? 0)==0 && closedAlerts>0)
+                message="已同步 · "+closedAlerts+" 项告警已关闭";
             SetText("StatusText", message);
+            Widget<TextBlock>("StatusText").ToolTip="只追踪现存来源，启动清点一次，平时只读取变化日志。点击查看来源文件变化记录、核实或关闭当前告警。\n消失的路径移出活动追踪，历史用量和覆盖缺口保留。\n关闭不代表缺口已修复；仍按部分覆盖显示。";
             Widget<Ellipse>("StatusDot").Fill = (Brush)new BrushConverter().ConvertFromString(color);
             pauseItem.Header = paused ? "继续采集和同步" : "暂停采集和同步";
-            SetText("CoverageText", "仅当前 Windows 用户 · 部分覆盖");
+            SetText("CoverageText", closedAlerts>0?"部分覆盖 · "+closedAlerts+" 项缺口已确认":"仅当前 Windows 用户 · 部分覆盖");
             Widget<TextBlock>("CoverageText").ToolTip = "按当前 Windows 用户的已确认归属统计；较早未归属到 Windows 用户的历史仍保留在服务器，不混入此窗口。压缩补充和未适配子代理尚未计入。";
             if (Get(last, "started_at") != null) SetText("SinceText", "开始于 " + Date(Get(last, "started_at")).ToOffset(TimeSpan.FromHours(8)).ToString("MM-dd HH:mm") + " · 右键管理");
         }
@@ -280,7 +290,7 @@ internal static class FloatingWindowApp
                 pin.Click += delegate { window.Topmost = pin.IsChecked; };
                 var hide = new MenuItem { Header = "关闭窗口，后台继续采集" }; hide.Click += delegate { window.Close(); };
                 var exit = new MenuItem { Header = "停止采集并退出" }; exit.Click += delegate { File.WriteAllText(stop, "stop"); window.Close(); };
-                var review = new MenuItem { Header = "核实暂停来源…" };review.Click+=delegate {SourceReviewWindow.Show(window,state);};
+                var review = new MenuItem { Header = "核实采集来源…" };review.Click+=delegate {SourceReviewWindow.Show(window,state);};
                 var proxy = new MenuItem { Header = "额度代理设置…" };proxy.Click+=delegate {ProxySettingsWindow.Show(window,root,state);};
                 Widget<Button>("QuotaProxySettings").Click+=delegate {ProxySettingsWindow.Show(window,root,state);};
                 Widget<TextBlock>("StatusText").Cursor=Cursors.Hand;

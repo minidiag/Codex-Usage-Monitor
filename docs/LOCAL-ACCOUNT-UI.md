@@ -17,7 +17,7 @@
 
 名称优先取桌面 App 本机缓存中 `/backend-api/me` 的 `name`，读取前核对用户身份与 Codex 登录/本机会话创建者一致，避免使用另一个账号的缓存。没有可用桌面缓存时回退到本机登录身份声明的 `name`；不把邮箱或匿名键当作显示名。
 
-头像优先取该个人资料引用的本机已缓存图片。如果本机没有图片，只允许对 OpenAI 官方头像来源发起普通 HTTPS 图片读取，不附带 bearer token 或 cookies，不发起登录，不跟随重定向。无法读取时显示姓名首字，不借用其他账号的头像。当前本机已经验证真实头像读取成功。
+头像优先取该个人资料引用的本机已缓存图片。头像链接变化但新图尚不可读时，保留同一账户此前缓存的头像，悬停注明“上次缓存”；新图片进入本机缓存后再替换。启动时可按账户键恢复仍留在头像目录的旧图，不借用其他账号的头像。如果本机没有任何可用图片，只允许对 OpenAI 官方头像来源发起普通 HTTPS 图片读取，不附带 bearer token 或 cookies，不发起登录，不跟随重定向。仍无法读取时显示姓名首字。当前本机已经验证真实头像读取成功。
 
 读取仅限本 Windows 用户的桌面缓存，不操作 ChatGPT 窗口、不提取浏览器 cookies 或密码、不复制整个个人资料响应。适配当前 Chromium blockfile 缓存布局，参考 [Chromium EntryStore](https://chromium.googlesource.com/chromium/src/net/+/HEAD/disk_cache/blockfile/disk_format.h) 和 [缓存地址格式](https://chromium.googlesource.com/chromium/src/+/b5035d51ba96304a61e151eed3e2eef67fc63086/net/disk_cache/blockfile/addr.h)。这是本地缓存适配器，桌面 App 更改格式时会保守回退，不影响数值采集。
 

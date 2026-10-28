@@ -2,7 +2,8 @@
  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
  Title="Codex Usage Monitor · 用量与额度" Width="350" Height="666"
  WindowStyle="None" ResizeMode="NoResize" AllowsTransparency="True" Background="Transparent"
- Topmost="True" ShowInTaskbar="True" FontFamily="Microsoft YaHei UI" Foreground="#EFF4FC">
+ Topmost="True" ShowInTaskbar="True" FontFamily="Microsoft YaHei UI" Foreground="#EFF4FC"
+ UseLayoutRounding="True" SnapsToDevicePixels="True" TextOptions.TextFormattingMode="Display">
  <Window.Resources>
   <Style TargetType="Button"><Setter Property="Background" Value="Transparent"/><Setter Property="Foreground" Value="#96A8C4"/>
    <Setter Property="BorderThickness" Value="0"/><Setter Property="Padding" Value="7,2"/>
@@ -11,7 +12,7 @@
   <Style x:Key="Card" TargetType="Border"><Setter Property="Background" Value="#1B263D"/><Setter Property="CornerRadius" Value="12"/><Setter Property="Padding" Value="13,10"/></Style>
   <Style x:Key="Period" TargetType="TextBlock"><Setter Property="Foreground" Value="#9FB1CE"/><Setter Property="FontSize" Value="11"/></Style>
   <DataTemplate x:Key="AccountItem">
-   <Grid Margin="2,0" ToolTip="{Binding DisplayName}" HorizontalAlignment="Center">
+   <Grid Margin="2,0" ToolTip="{Binding DisplayHint}" HorizontalAlignment="Center">
     <Grid.ColumnDefinitions><ColumnDefinition Width="24"/><ColumnDefinition Width="6"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
     <Grid Width="24" Height="24">
      <Ellipse Fill="#34485F"/>
@@ -50,9 +51,12 @@
    </ControlTemplate></Setter.Value></Setter>
   </Style>
  </Window.Resources>
- <Border x:Name="Surface" CornerRadius="18" Background="#111B2D" BorderBrush="#31415E" BorderThickness="1" Margin="6" Padding="18,15">
-  <Border.Effect><DropShadowEffect BlurRadius="12" ShadowDepth="2" Opacity="0.28"/></Border.Effect>
-  <Grid>
+ <Grid>
+  <Border x:Name="PanelShadow" CornerRadius="18" Background="#111B2D" Margin="6" IsHitTestVisible="False">
+   <Border.Effect><DropShadowEffect BlurRadius="12" ShadowDepth="2" Opacity="0.28"/></Border.Effect>
+  </Border>
+  <Border x:Name="Surface" CornerRadius="18" Background="#111B2D" BorderBrush="#31415E" BorderThickness="1" Margin="6" Padding="18,15">
+  <Grid Background="#111B2D" RenderOptions.ClearTypeHint="Enabled">
    <Grid.RowDefinitions><RowDefinition Height="64"/><RowDefinition Height="174"/><RowDefinition Height="12"/><RowDefinition Height="132"/><RowDefinition Height="12"/><RowDefinition Height="140"/><RowDefinition Height="*"/></Grid.RowDefinitions>
    <Grid Grid.Row="0">
     <Grid.RowDefinitions><RowDefinition Height="36"/><RowDefinition Height="22"/></Grid.RowDefinitions>
@@ -111,5 +115,6 @@
     <TextBlock x:Name="SinceText" Text="右键可暂停或退出" FontSize="10" Foreground="#637998" Margin="0,3,0,0"/>
    </StackPanel>
   </Grid>
- </Border>
+  </Border>
+ </Grid>
 </Window>

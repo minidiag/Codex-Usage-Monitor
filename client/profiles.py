@@ -158,7 +158,7 @@ class ProfilesMonitor:
             saved=json.loads(self.path.read_text(encoding="utf-8"))
             for account,value in saved.items():
                 if re.fullmatch(r"[0-9a-f]{64}",account) and isinstance(value,dict):
-                    self.profiles[account]=self.clean(value)
+                    self.profiles[account]=self.presentation(account,value)
         except (OSError,ValueError,AttributeError):pass
 
     def clean(self,value):
@@ -169,7 +169,31 @@ class ProfilesMonitor:
         if isinstance(path,str) and path:
             candidate=Path(path).resolve()
             if candidate.is_relative_to(self.avatars.resolve()) and candidate.is_file():
-                result.update(avatar_path=str(candidate),avatar_source="chatgpt_desktop")
+                result.update(avatar_path=str(candidate),avatar_source="cached_previous" if value.get("avatar_source")=="cached_previous" else "chatgpt_desktop")
+        return result
+
+    def presentation(self,account,value):
+        result=self.clean(value)
+        if result["avatar_path"] and Path(result["avatar_path"]).name.startswith(account+"-"):
+            return result
+        result.update(avatar_path="",avatar_source="initials")
+        # Signed picture URLs can rotate while offline. Retain only this account's
+        # previously saved local image; never borrow another account's avatar.
+        candidates=[]
+        for path in self.avatars.glob(account+"-*"):
+            try:
+                if (re.fullmatch(re.escape(account)+r"-[0-9a-f]{16}\.(png|jpg|gif|bmp)",path.name)
+                        and path.is_file() and path.resolve().is_relative_to(self.avatars.resolve())
+                        and path.stat().st_size<=2*1024*1024):
+                    candidates.append((path.stat().st_mtime_ns,path))
+            except OSError:continue
+        for _,path in sorted(candidates,reverse=True):
+            try:
+                with path.open("rb") as handle:valid=avatar_type(handle.read(16))
+                if valid:
+                    result.update(avatar_path=str(path.resolve()),avatar_source="cached_previous")
+                    break
+            except OSError:continue
         return result
 
     def snapshot(self):
@@ -195,7 +219,7 @@ class ProfilesMonitor:
                     known[login["account_key"]]=login
                     with self.lock:
                         old=self.profiles.get(login["account_key"],{})
-                        self.profiles[login["account_key"]]=dict(self.clean(old),display_name=login["name"] or old.get("display_name","") or "未读取到账号名称")
+                        self.profiles[login["account_key"]]=dict(self.presentation(login["account_key"],old),display_name=login["name"] or old.get("display_name","") or "未读取到账号名称")
                 database=ActiveSessionReader.find_database(home.resolve())
                 if database:
                     db=sqlite3.connect(database.as_uri()+"?mode=ro",uri=True,timeout=.2)
@@ -222,13 +246,13 @@ class ProfilesMonitor:
             if self.cancel.is_set():break
             with self.lock:
                 old=self.profiles.get(account,{})
-                value=dict(self.clean(old),display_name=profile["name"] or old.get("display_name","") or "未读取到账号名称")
+                value=dict(self.presentation(account,old),display_name=profile["name"] or old.get("display_name","") or "未读取到账号名称")
                 self.profiles[account]=value
             picture=profile["picture"]
             if not isinstance(picture,str) or not picture or len(picture)>4096:continue
             fingerprint=hashlib.sha256(picture.encode()).hexdigest()
             if value.get("picture_fingerprint")!=fingerprint:
-                value=dict(value,avatar_path="",avatar_source="initials",picture_fingerprint=fingerprint)
+                value=dict(value,avatar_source="cached_previous" if value["avatar_path"] else "initials",picture_fingerprint=fingerprint)
                 with self.lock:self.profiles[account]=value
             image=None
             for cache,entries in caches:

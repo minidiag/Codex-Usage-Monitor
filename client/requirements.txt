@@ -1,0 +1,2 @@
+# Optional for validating compressed historical sources; ordinary JSONL remains usable without it.
+zstandard==0.25.0

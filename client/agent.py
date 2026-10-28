@@ -20,6 +20,7 @@ from client.profiles import ProfilesMonitor
 from client.view_policy import window_filters
 from client.cycles import CycleMonitor
 from client.source_review import SourceReview
+from client.source_inventory import SourceInventory
 from server.protocol import HEALTH_REASONS, UTC, iso
 
 
@@ -128,7 +129,9 @@ class Agent:
         self.identity = IdentityTracker(self.homes,config["identity_key"]) if hasattr(self.api,"register_identity") else None
         self.profiles=ProfilesMonitor(self.homes,config["identity_key"],self.state) if self.identity else None
         self.cycles=CycleMonitor(self.state,Api(config)) if hasattr(self.api,"record_quota_cycles") else None
-        self.source_review=SourceReview(self.state,self.ledger,self.api)
+        self.inventory=SourceInventory(self.homes,self.ledger)
+        self.source_review=SourceReview(self.state,self.ledger,self.api,self.homes,self.inventory)
+        self.compressed_paths=[]
         self.identity_registered = False
         self.filters, self.catalog, self.last_catalog = {}, {}, 0
         if self.identity:
@@ -142,16 +145,19 @@ class Agent:
 
     def publish(self, running=True):
         queue = self.ledger.pending_count()
-        reasons = self.ledger.warnings()
+        source_health = self.ledger.source_health(self.compressed_paths)
+        reasons = self.ledger.warnings(source_health)
+        active_ids = {item["stream_id"] for item in source_health["active_alerts"]}
+        blocked = [row[0] for row in self.ledger.db.execute("SELECT id FROM streams WHERE paused IS NOT NULL")]
         started = self.ledger.db.execute("SELECT value FROM meta WHERE key='started_at'").fetchone()[0]
-        atomic_json(self.state / "status.json", dict(version="0.6.0", pid=os.getpid(), running=running,
+        atomic_json(self.state / "status.json", dict(version="0.9.0", pid=os.getpid(), running=running,
                     updated_at=iso(datetime.now(UTC)), started_at=started,
                     last_scan_at=iso(self.last_scan) if self.last_scan else None, last_upload_at=self.last_upload,
                     queued_records=queue, sources=self.ledger.db.execute("SELECT count(*) FROM sources").fetchone()[0],
                     streams=self.ledger.db.execute("SELECT count(*) FROM streams").fetchone()[0],
-                    blocked_streams=self.ledger.db.execute("SELECT count(*) FROM streams WHERE paused IS NOT NULL").fetchone()[0],
+                    blocked_streams=sum(stream in active_ids for stream in blocked), blocked_streams_total=len(blocked),
                     checkpoints=self.ledger.db.execute("SELECT count(*) FROM events").fetchone()[0],
-                    paused=self.paused, error=self.error, local_reasons=sorted(reasons), summary=self.server_summary,
+                    paused=self.paused, error=self.error, local_reasons=sorted(reasons), source_health=source_health, source_tracking=self.inventory.snapshot(), summary=self.server_summary,
                     quota=self.quota.snapshot(), quotas=[q.snapshot() for q in self.quotas], active_sessions=self.active_view(),
                     identity=self.identity.snapshot() if self.identity else {}, catalog=self.catalog, filters=self.filters,
                     local_profiles=self.profiles.snapshot() if self.profiles else [], local_account_keys=self.local_account_keys(),
@@ -227,32 +233,28 @@ class Agent:
                     self.identity_registered = True
                 except ApiFailure as error:
                     self.error = error.code
-        found = False
+        changed=self.inventory.poll()
+        found=self.inventory.roots_exist()
+        self.compressed_paths=self.inventory.compressed()
+        if self.inventory.errors:reasons.add('scan_failed')
         if self.ledger.path.stat().st_size > 500*1024*1024:
             reasons.add("queue_full")
         else:
-            for home in self.homes:
-                for folder in (home / "sessions", home / "archived_sessions"):
-                    if not folder.exists():
-                        continue
-                    found = True
-                    for path in folder.rglob("*.jsonl"):
-                        try:
-                            self.ledger.scan_file(path)
-                        except OutboxFull:
-                            reasons.add("queue_full")
-                            break
-                        except FileNotFoundError:
-                            continue  # A concurrent archive/move is rediscovered on the next scan.
-                        except (PermissionError, OSError):
-                            reasons.add("scan_failed")
-                    if any(folder.rglob("*.jsonl.zst")):
-                        reasons.add("unsupported_usage")
+            for path in changed:
+                try:
+                    self.ledger.scan_file(path,force=True)
+                    self.inventory.acknowledge(path)
+                except OutboxFull:
+                    reasons.add('queue_full');break
+                except FileNotFoundError:
+                    self.inventory.acknowledge(path)
+                except (PermissionError,OSError):
+                    reasons.add('scan_failed')
         if not found:
             reasons.add("source_missing")
         if not reasons & {"scan_failed", "source_missing", "queue_full"}:
             self.last_scan = datetime.now(UTC)
-        reasons.update(self.ledger.warnings())
+        reasons.update(self.ledger.warnings(self.ledger.source_health(self.compressed_paths)))
         try:
             for _ in range(4):
                 if not upload_once(self.ledger, self.api):
@@ -291,8 +293,17 @@ class Agent:
             selected=(self.filters or {}).get("account")
             target=(quotas[0].get("account_key") if not selected else (None if selected=="unassigned" else selected))
             self.cycles.tick((self.identity.subject or {}).get("principal_key"),target)
-        if reasons & {"scan_failed", "queue_full", "source_missing"}:
-            self.error = sorted(reasons & {"scan_failed", "queue_full", "source_missing"})[0]
+        health = self.ledger.source_health(self.compressed_paths)
+        active_kinds = {kind for item in health["active_alerts"] for kind in item["kinds"]}
+        if reasons & {"scan_failed", "queue_full"}:
+            self.error = sorted(reasons & {"scan_failed", "queue_full"})[0]
+        elif not self.error:
+            if not found:
+                self.error = "source_directory_missing"
+            elif "missing" in active_kinds:
+                self.error = "source_missing"
+            elif "compressed" in active_kinds:
+                self.error = "compressed_source_unverified"
         self.publish()
 
 

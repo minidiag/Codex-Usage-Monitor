@@ -9,6 +9,8 @@ if (-not $PythonExe) { throw '请用 -PythonExe 指定当前用户可运行的 P
 $PythonExe=[IO.Path]::GetFullPath($PythonExe)
 & $PythonExe -c 'import sys;sys.exit(0 if sys.version_info >= (3,12) else 1)'
 if ($LASTEXITCODE -ne 0) { throw '需要当前用户可运行的 Python 3.12 或更新版本。' }
+& $PythonExe -c 'import importlib.util,sys;sys.exit(0 if importlib.util.find_spec("zstandard") else 1)'
+if ($LASTEXITCODE -ne 0) { Write-Warning '未安装 zstandard：普通日志仍可采集；压缩历史会显示待核实。可用同一 Python 执行 -m pip install -r client/requirements.txt 安装解码组件。' }
 if ($PSBoundParameters.ContainsKey('QuotaProxy') -and $QuotaProxy) {
     $usageProxyUri=$null
     if (-not [Uri]::TryCreate($QuotaProxy,[UriKind]::Absolute,[ref]$usageProxyUri) -or

@@ -26,6 +26,69 @@ internal static class SourceReviewWindow
     static TextBlock Label(string value,double size=12){return new TextBlock {Text=value,FontSize=size,TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,3,0,3)};}
     static string LocalTime(object value)
     {DateTimeOffset parsed;return DateTimeOffset.TryParse(Text(value),out parsed)?parsed.ToOffset(TimeSpan.FromHours(8)).ToString("yyyy-MM-dd HH:mm:ss"):"未知";}
+    static void CloseAlert(Dictionary<string,object> alert,object revision)
+    {
+        var prompt=new Window {Title="关闭此来源告警",Owner=dialog,Width=580,SizeToContent=SizeToContent.Height,ResizeMode=ResizeMode.NoResize,WindowStartupLocation=WindowStartupLocation.CenterOwner,Topmost=dialog.Topmost,Background=new SolidColorBrush(Color.FromRgb(20,31,49)),Foreground=Brushes.White,UseLayoutRounding=true,SnapsToDevicePixels=true};
+        var panel=new StackPanel {Margin=new Thickness(22)};
+        panel.Children.Add(Label("关闭此来源当前问题的重复告警",17));
+        foreach(object path in Rows(Get(alert,"paths")))panel.Children.Add(Label(Text(path)));
+        panel.Children.Add(Label("历史数据及待传记录保留，原采集暂停状态保留；关闭不代表缺失用量已恢复。文件重新出现、内容或来源状态变化时会重新告警。"));
+        panel.Children.Add(Label("关闭原因（必填，最多 200 字）"));
+        var reason=new TextBox {MaxLength=200,Margin=new Thickness(0,5,0,8),Padding=new Thickness(8)};panel.Children.Add(reason);
+        var error=Label("");panel.Children.Add(error);
+        var buttons=new StackPanel {Orientation=Orientation.Horizontal,HorizontalAlignment=HorizontalAlignment.Right};
+        var cancel=new Button {Content="取消",Padding=new Thickness(14,6,14,6),Margin=new Thickness(0,0,12,0)};cancel.Click+=delegate {prompt.Close();};buttons.Children.Add(cancel);
+        var confirm=new Button {Content="确认关闭告警",Padding=new Thickness(14,6,14,6)};
+        confirm.Click+=delegate
+        {
+            if(String.IsNullOrWhiteSpace(reason.Text)){error.Text="请填写关闭原因，例如：日志已删除且无法找回。";return;}
+            var fields=new Dictionary<string,object>{{"stream_id",Get(alert,"stream_id")},{"fingerprint",Get(alert,"fingerprint")},{"revision",revision},{"reason",reason.Text.Trim()}};
+            prompt.Close();Request("close_alert",fields);
+        };
+        buttons.Children.Add(confirm);panel.Children.Add(buttons);prompt.Content=panel;prompt.ShowDialog();
+    }
+    static void Alerts(Dictionary<string,object> report)
+    {
+        var health=Map(Get(report,"source_health"));
+        var active=Rows(Get(health,"active_alerts"));var closed=Rows(Get(health,"closed_alerts"));
+        body.Children.Add(Label("来源告警 · 待处理 "+active.Length+" · 已关闭 "+closed.Length,17));
+        body.Children.Add(Label("关闭只确认当前覆盖缺口，不会删除数据或解除采集暂停。其他来源继续采集；来源发生变化会重新告警。"));
+        foreach(object value in active)
+        {
+            var row=Map(value);var panel=new StackPanel {Margin=new Thickness(12)};
+            panel.Children.Add(Label(Text(Get(row,"message")),14));
+            foreach(object path in Rows(Get(row,"paths")))panel.Children.Add(new TextBox {Text=Text(path),IsReadOnly=true,TextWrapping=TextWrapping.Wrap,Background=Brushes.Transparent,Foreground=Brushes.White,BorderThickness=new Thickness(0)});
+            panel.Children.Add(Label("保留 "+Text(Get(row,"retained_records"))+" 条记录 · 待传 "+Text(Get(row,"pending"))+" 条\n最后已采集时间："+LocalTime(Get(row,"last_record_at"))));
+            var close=new Button {Content="关闭此来源告警…",HorizontalAlignment=HorizontalAlignment.Left,Padding=new Thickness(12,5,12,5),Margin=new Thickness(0,6,0,0)};
+            var alert=row;object revision=Get(report,"revision");close.Click+=delegate {CloseAlert(alert,revision);};panel.Children.Add(close);
+            body.Children.Add(new Border {Child=panel,BorderBrush=new SolidColorBrush(Color.FromRgb(96,74,52)),BorderThickness=new Thickness(1),CornerRadius=new CornerRadius(5),Margin=new Thickness(0,5,0,5)});
+        }
+        if(closed.Length>0)body.Children.Add(Label("已关闭的告警 / 已确认覆盖缺口",15));
+        foreach(object value in closed)
+        {
+            var row=Map(value);body.Children.Add(Label(LocalTime(Get(row,"closed_at"))+" · 原因："+Text(Get(row,"reason"))));
+            foreach(object path in Rows(Get(row,"paths")))body.Children.Add(Label(Text(path)));
+            var reopen=new Button {Content="重新打开此告警",HorizontalAlignment=HorizontalAlignment.Left,Padding=new Thickness(12,5,12,5),Margin=new Thickness(0,3,0,8)};
+            var fields=new Dictionary<string,object>{{"stream_id",Get(row,"stream_id")},{"fingerprint",Get(row,"fingerprint")},{"closure_id",Get(row,"closure_id")},{"revision",Get(report,"revision")}};
+            reopen.Click+=delegate {Request("reopen_alert",new Dictionary<string,object>(fields));};body.Children.Add(reopen);
+        }
+    }
+    static void Tracking(Dictionary<string,object> report)
+    {
+        var tracking=Map(Get(report,"source_tracking"));
+        if(tracking.Count>0)
+            body.Children.Add(Label("现存来源增量追踪 · 当前 "+Text(Get(tracking,"existing_files"))+" 个文件 · 本轮变化候选 "+Text(Get(tracking,"content_candidates"))+" 个\n启动清点次数 "+Text(Get(tracking,"initial_censuses"))+" · 本轮目录枚举 "+Text(Get(tracking,"directory_reads"))+" 次。未变化的日志不重读，已消失路径移出活动追踪。"));
+        var changes=Rows(Get(report,"source_changes"));
+        if(changes.Length==0)return;
+        var list=new StackPanel();list.Children.Add(Label("这里只能确认观察到的路径变化，无法可靠判断由谁、因为什么删除。历史数据和覆盖缺口仍保留。"));
+        foreach(object value in changes)
+        {
+            var row=Map(value);string kind=Text(Get(row,"kind"));
+            string label=kind=="renamed_observed"?"观察到迁移/改名":kind=="compressed_observed"?"发现同名压缩文件":kind=="removed_observed"?"观察到路径消失":kind=="not_present_at_startup"?"启动时已不存在":"发现新增来源";
+            list.Children.Add(Label(LocalTime(Get(row,"observed_at"))+" · "+label+"\n"+Text(Get(row,"path"))+"\n"+Text(Get(row,"message"))+(Get(row,"related_path")!=null?"\n关联路径："+Text(Get(row,"related_path")):"")));
+        }
+        body.Children.Add(new Expander {Header="来源文件变化记录（最近 "+changes.Length+" 项）",Content=list,Margin=new Thickness(0,10,0,10)});
+    }
     static void Request(string action,Dictionary<string,object> fields=null)
     {
         try
@@ -49,8 +112,10 @@ internal static class SourceReviewWindow
             if(raw==lastReport)return;
             pending=null;lastReport=raw;body.IsEnabled=true;body.Children.Clear();
             note.Text=Text(Get(Map(Get(report,"result")),"message"))+"\n核实时间："+LocalTime(Get(report,"generated_at"));
+            Alerts(report);
+            Tracking(report);
             var streams=Rows(Get(report,"streams"));
-            if(streams.Length==0)body.Children.Add(Label("没有需要核实的暂停来源。"));
+            if(streams.Length==0)body.Children.Add(Label("没有暂停来源；压缩与缺失来源的检查结果见下方。"));
             int number=0;
             foreach(object value in streams)
             {
@@ -81,11 +146,47 @@ internal static class SourceReviewWindow
                 }
                 body.Children.Add(group);
             }
+            var health=Map(Get(report,"source_health"));
+            var archives=Rows(Get(health,"archives"));
+            var missing=Rows(Get(health,"missing"));
+            var unknown=Rows(Get(health,"unregistered_archives"));
+            if(archives.Length+missing.Length+unknown.Length>0)
+            {
+                body.Children.Add(Label("压缩与缺失来源",16));
+                body.Children.Add(Label("核实只读取日志并缓存结果，不新增或覆盖用量事件。已保存的待传记录继续重试；原文件或压缩文件变化时会重新检查。"));
+                foreach(object value in archives)
+                {
+                    var row=Map(value);string status=Text(Get(row,"status"));
+                    body.Children.Add(Label(status=="synced"?"已同步历史来源":status=="pending"?"已核实 · 等待上传确认":status=="no_usage"?"无可采集用量的历史来源":"压缩来源待核实",14));
+                    body.Children.Add(new TextBox {Text=Text(Get(row,"path")),IsReadOnly=true,TextWrapping=TextWrapping.Wrap,Background=Brushes.Transparent,Foreground=Brushes.White,BorderThickness=new Thickness(0)});
+                    body.Children.Add(Label("原文件："+Text(Get(row,"original_path"))+"\n"+Text(Get(row,"message"))+"\n待传 "+Text(Get(row,"pending"))+" 条"));
+                    if(status=="unverified")body.Children.Add(Label("处理方式：确认文件写入完成后点“重新核实”；仍失败时恢复原 .jsonl 日志。缺少解码组件需先安装 zstandard。不会把未知记录自动计入统计。"));
+                }
+                foreach(object value in missing)
+                {
+                    var row=Map(value);body.Children.Add(Label("文件缺失："+Text(Get(row,"path"))+"\n未找到可用副本，请恢复原日志或检查来源目录，然后重新核实。"));
+                }
+                foreach(object value in unknown)
+                {
+                    var row=Map(value);body.Children.Add(Label(Text(Get(row,"path"))+"\n"+Text(Get(row,"message"))));
+                }
+            }
             var audit=Rows(Get(report,"audit"));
             if(audit.Length>0)
             {
                 body.Children.Add(Label("最近的恢复记录",15));
                 foreach(object entry in audit){var row=Map(entry);body.Children.Add(Label(LocalTime(Get(row,"created_at"))+" · "+Text(Get(row,"selected_path"))+"\n备份："+Text(Get(row,"backup"))));}
+            }
+            var alertAudit=Rows(Get(report,"alert_audit"));
+            if(alertAudit.Length>0)
+            {
+                body.Children.Add(Label("最近的告警操作记录",15));
+                foreach(object value in alertAudit)
+                {
+                    var row=Map(value);string action=Text(Get(row,"action"));
+                    string label=action=="close"?"关闭告警":action=="reopen"?"手动重新打开":action=="changed"?"来源变化，重新告警":action=="retired"?"移出活动追踪，缺口保留":"原问题已消失";
+                    body.Children.Add(Label(LocalTime(Get(row,"created_at"))+" · "+label+"\n"+Text(Get(row,"reason"))+Text(Get(row,"message"))+(Get(row,"backup")!=null?"\n备份："+Text(Get(row,"backup")):"")));
+                }
             }
         }
         catch(IOException) { }
@@ -95,10 +196,10 @@ internal static class SourceReviewWindow
     {
         if(dialog!=null){dialog.Activate();return;}
         state=directory;pending=null;lastReport=null;
-        dialog=new Window {Title="采集来源核实与恢复",Width=930,Height=690,MinWidth=650,MinHeight=400,Owner=owner,WindowStartupLocation=WindowStartupLocation.CenterScreen,Background=new SolidColorBrush(Color.FromRgb(20,31,49)),Foreground=Brushes.White,Topmost=owner.Topmost};
+        dialog=new Window {Title="采集来源核实与恢复",Width=930,Height=690,MinWidth=650,MinHeight=400,Owner=owner,WindowStartupLocation=WindowStartupLocation.CenterScreen,Background=new SolidColorBrush(Color.FromRgb(20,31,49)),Foreground=Brushes.White,Topmost=owner.Topmost,UseLayoutRounding=true,SnapsToDevicePixels=true};
         var layout=new DockPanel {Margin=new Thickness(18)};
         var header=new StackPanel();DockPanel.SetDock(header,Dock.Top);
-        header.Children.Add(Label("核实本地日志，选择能够复现原基线和历史记录的来源",18));
+        header.Children.Add(Label("核实本地日志、压缩历史与缺失来源",18));
         header.Children.Add(Label("同会话的不同日志不会自动合并。文件变化、历史冲突或服务器无法核实时会拒绝恢复。报告和路径仅保存在本机。"));
         var buttons=new StackPanel {Orientation=Orientation.Horizontal,Margin=new Thickness(0,8,0,8)};
         var inspect=new Button {Content="重新核实",Padding=new Thickness(12,6,12,6),Margin=new Thickness(0,0,10,0)};

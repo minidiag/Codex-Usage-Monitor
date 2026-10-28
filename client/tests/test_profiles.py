@@ -97,6 +97,38 @@ class ProfileTests(unittest.TestCase):
         restored=self.monitor();restored.refresh()
         self.assertEqual(restored.snapshot()[0]["avatar_path"],new)
 
+    def test_rotating_picture_url_keeps_same_account_cached_avatar_until_new_image_is_local(self):
+        self.fixture_cache();monitor=self.monitor();monitor.refresh()
+        old=monitor.snapshot()[0]["avatar_path"]
+        self.fixture_cache(picture="https://chatgpt.com/backend-api/estuary/new.png",image=None)
+        monitor.refresh()
+        profile=monitor.snapshot()[0]
+        self.assertEqual(profile["avatar_path"],old)
+        self.assertEqual(profile["avatar_source"],"cached_previous")
+        restored=self.monitor()
+        self.assertEqual(restored.snapshot()[0]["avatar_path"],old)
+        self.assertEqual(restored.snapshot()[0]["avatar_source"],"cached_previous")
+        self.fixture_cache(picture="https://chatgpt.com/backend-api/estuary/new.png")
+        restored.refresh()
+        self.assertNotEqual(restored.snapshot()[0]["avatar_path"],old)
+        self.assertEqual(restored.snapshot()[0]["avatar_source"],"chatgpt_desktop")
+
+    def test_orphaned_local_avatar_is_recovered_only_for_the_matching_account(self):
+        self.fixture_cache();monitor=self.monitor();monitor.refresh()
+        old=monitor.snapshot()[0]["avatar_path"]
+        saved=json.loads(monitor.path.read_text(encoding="utf-8"))
+        saved[ACCOUNT].update(avatar_path="",avatar_source="initials")
+        monitor.path.write_text(json.dumps(saved),encoding="utf-8")
+        restored=self.monitor()
+        self.assertEqual(restored.snapshot()[0]["avatar_path"],old)
+        other=restored.presentation("b"*64,saved[ACCOUNT])
+        self.assertEqual(other["avatar_path"],"")
+
+    def test_corrupt_local_avatar_is_not_recovered_as_an_image(self):
+        monitor=self.monitor()
+        (monitor.avatars/(ACCOUNT+"-"+"a"*16+".png")).write_bytes(b"<html>not an image</html>")
+        self.assertEqual(monitor.presentation(ACCOUNT,{})["avatar_path"],"")
+
 
 class ViewPolicyTests(unittest.TestCase):
     def test_admin_window_cannot_select_other_windows_users_or_computers(self):
