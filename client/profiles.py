@@ -1,4 +1,4 @@
-"""Local presentation data only. Never attach these fields to telemetry identities or requests.
+"""Local presentation adapter; explicit name-only sync lives in client.display_names.
 
 Read only matching /backend-api/me entries and the referenced avatar from the desktop cache.
 Chromium format: chromium.googlesource.com/chromium/src/net/+/HEAD/disk_cache/blockfile/disk_format.h

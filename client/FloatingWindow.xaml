@@ -111,7 +111,7 @@
    </Border>
    <StackPanel Grid.Row="6" Margin="0,13,0,0">
     <DockPanel><Ellipse x:Name="StatusDot" Fill="#E8BF73" Width="6" Height="6" Margin="0,0,7,0"/><TextBlock x:Name="StatusText" Text="正在连接…" FontSize="11" Foreground="#C5D2E7"/><TextBlock x:Name="UpdatedText" Text="" HorizontalAlignment="Right" FontSize="10" Foreground="#7D91B3"/></DockPanel>
-    <TextBlock x:Name="CoverageText" Text="未导入启用前历史" FontSize="10" Foreground="#7D91B3" Margin="0,7,0,0"/>
+    <DockPanel Margin="0,7,0,0"><Button x:Name="DashboardAccess" DockPanel.Dock="Right" Content="网页凭据" FontSize="10" Padding="5,0" ToolTip="获取本用户只读凭据，登录网页仪表盘"/><TextBlock x:Name="CoverageText" Text="未导入启用前历史" FontSize="10" Foreground="#7D91B3"/></DockPanel>
     <TextBlock x:Name="SinceText" Text="右键可暂停或退出" FontSize="10" Foreground="#637998" Margin="0,3,0,0"/>
    </StackPanel>
   </Grid>

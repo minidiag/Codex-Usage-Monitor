@@ -39,7 +39,7 @@ class LedgerTests(unittest.TestCase):
     def tearDown(self):
         # All rows belong to this test's random tenant, on the disposable database.
         with self.store.connect() as db:
-            for table in ("quota_cycle_totals","quota_cycle_observations","quota_cycles","source_observations","event_subjects","device_subjects","principals","machines","accounts","ingest_conflicts", "usage_deltas", "usage_events", "streams", "credentials", "devices", "tenants"):
+            for table in ("account_display_names","quota_boundary_states","quota_boundary_samples","quota_cycle_totals","quota_cycle_observations","quota_cycles","source_observations","event_subjects","device_subjects","principals","machines","accounts","ingest_conflicts", "usage_deltas", "usage_events", "streams", "credentials", "devices", "tenants"):
                 field = "id" if table == "tenants" else "tenant_id"
                 db.execute(f"DELETE FROM {table} WHERE {field}=%s", (self.tenant,))
 

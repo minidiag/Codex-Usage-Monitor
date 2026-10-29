@@ -129,13 +129,24 @@ class Api:
     def register_identity(self, subject):
         return self.request("/v2/identity",data=subject)
 
+    def record_display_names(self,profiles):
+        return self.request('/v3/accounts/display-names',data=dict(profiles=profiles))
+
     def identities(self):
         return self.request("/v2/identities",scope="read")
 
     def record_quota_cycles(self,rows):
         return self.request("/v2/usage/quota-cycles",data=dict(cycles=rows))
 
+    def record_boundary_observations(self,rows):
+        return self.request('/v3/usage/quota-observations',data=dict(cycles=rows))
+
+    def current_quota_cycles(self,account,principal):
+        return self.request('/v3/usage/quota-current?'+urllib.parse.urlencode(dict(account=account,principal=principal)),scope='read')
+
     def quota_cycles(self,account,principal=None):
-        query=dict(account=account,limit="8")
+        # Older servers sort all buckets by reset time, so weekly history can
+        # fill a short page before the current five-hour cycle is reached.
+        query=dict(account=account,limit="200")
         if principal:query["principal"]=principal
         return self.request("/v2/usage/quota-cycles?"+urllib.parse.urlencode(query),scope="read")

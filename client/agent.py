@@ -19,6 +19,7 @@ from client.paths import state_path, credential_path
 from client.profiles import ProfilesMonitor
 from client.view_policy import window_filters
 from client.cycles import CycleMonitor
+from client.display_names import DisplayNameSync
 from client.source_review import SourceReview
 from client.source_inventory import SourceInventory
 from server.protocol import HEALTH_REASONS, UTC, iso
@@ -128,6 +129,7 @@ class Agent:
         self.active_sessions = ActiveSessionReader(self.homes)
         self.identity = IdentityTracker(self.homes,config["identity_key"]) if hasattr(self.api,"register_identity") else None
         self.profiles=ProfilesMonitor(self.homes,config["identity_key"],self.state) if self.identity else None
+        self.display_names=DisplayNameSync(self.state,self.api) if self.profiles and hasattr(self.api,'record_display_names') else None
         self.cycles=CycleMonitor(self.state,Api(config)) if hasattr(self.api,"record_quota_cycles") else None
         self.inventory=SourceInventory(self.homes,self.ledger)
         self.source_review=SourceReview(self.state,self.ledger,self.api,self.homes,self.inventory)
@@ -161,6 +163,7 @@ class Agent:
                     quota=self.quota.snapshot(), quotas=[q.snapshot() for q in self.quotas], active_sessions=self.active_view(),
                     identity=self.identity.snapshot() if self.identity else {}, catalog=self.catalog, filters=self.filters,
                     local_profiles=self.profiles.snapshot() if self.profiles else [], local_account_keys=self.local_account_keys(),
+                    display_name_sync=self.display_names.snapshot() if self.display_names else {},
                     view_scope="current_windows_user",quota_cycle_stats=self.cycles.snapshot() if self.cycles else {}))
 
     def local_account_keys(self):
@@ -293,6 +296,8 @@ class Agent:
             selected=(self.filters or {}).get("account")
             target=(quotas[0].get("account_key") if not selected else (None if selected=="unassigned" else selected))
             self.cycles.tick((self.identity.subject or {}).get("principal_key"),target)
+        if self.display_names and self.identity_registered:
+            self.display_names.tick(self.profiles.snapshot(),self.identity.snapshot()['accounts'])
         health = self.ledger.source_health(self.compressed_paths)
         active_kinds = {kind for item in health["active_alerts"] for kind in item["kinds"]}
         if reasons & {"scan_failed", "queue_full"}:
@@ -354,6 +359,7 @@ def main():
     finally:
         if agent:
             if agent.cycles:agent.cycles.close()
+            if agent.display_names:agent.display_names.close()
             if agent.profiles:agent.profiles.close()
             for quota in agent.quotas: quota.close()
             agent.publish(running=False)

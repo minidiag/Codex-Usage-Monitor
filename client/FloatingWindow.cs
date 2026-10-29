@@ -96,7 +96,7 @@ internal static class FloatingWindowApp
                 string principal=Text(Get(Map(Get(Map(Get(data,"identity")),"subject")),"principal_key"));
                 string account=Text(Get(quota,"account_key"));
                 var cycle=CycleView.Read(Get(data,"quota_cycle_stats"),account,principal,key,reset,Numeric(Get(value,"duration_mins")),now);
-                SetText("Quota" + suffix + "Label", QuotaView.Label(Numeric(Get(value, "duration_mins")), key == "primary")+"（"+cycle.Tokens+"）");
+                SetText("Quota" + suffix + "Label", QuotaView.Label(Numeric(Get(value, "duration_mins")), key == "primary")+"（"+(cycle.Tokens=="—"?cycle.StatusText:cycle.Tokens)+"）");
                 Widget<TextBlock>("Quota"+suffix+"Label").ToolTip=cycle.Hint;
                 Widget<TextBlock>("Quota"+suffix+"Label").Opacity=cycle.Fresh?1:0.65;
                 SetText("Quota" + suffix + "Remaining", QuotaView.Remaining(remaining, current));
@@ -293,10 +293,12 @@ internal static class FloatingWindowApp
                 var review = new MenuItem { Header = "核实采集来源…" };review.Click+=delegate {SourceReviewWindow.Show(window,state);};
                 var proxy = new MenuItem { Header = "额度代理设置…" };proxy.Click+=delegate {ProxySettingsWindow.Show(window,root,state);};
                 Widget<Button>("QuotaProxySettings").Click+=delegate {ProxySettingsWindow.Show(window,root,state);};
+                Widget<Button>("DashboardAccess").Click+=delegate {DashboardAccessWindow.Show(window,root,state);};
+                var dashboardAccess=new MenuItem {Header="网页仪表盘登录…"};dashboardAccess.Click+=delegate {DashboardAccessWindow.Show(window,root,state);};
                 Widget<TextBlock>("StatusText").Cursor=Cursors.Hand;
                 Widget<TextBlock>("StatusText").ToolTip="点击打开来源核实与恢复，查看文件差异和可恢复条件。";
                 Widget<TextBlock>("StatusText").MouseLeftButtonUp+=delegate {SourceReviewWindow.Show(window,state);};
-                menu.Items.Add(pauseItem); menu.Items.Add(proxy); menu.Items.Add(review); menu.Items.Add(pin); menu.Items.Add(hide); menu.Items.Add(exit);
+                menu.Items.Add(dashboardAccess);menu.Items.Add(new Separator());menu.Items.Add(pauseItem); menu.Items.Add(proxy); menu.Items.Add(review); menu.Items.Add(pin); menu.Items.Add(hide); menu.Items.Add(exit);
                 Widget<Border>("Surface").ContextMenu = menu;
                 AccountView.Attach(window,WriteControl,AccountPending,state);
                 timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };

@@ -1,6 +1,6 @@
 # Windows 采集器与用量悬浮窗
 
-当前版本为 0.9.0。桌面入口为 **Codex 用量统计**，当前用户登录时自动启动。窗口固定显示当前 Windows 用户的用量，标题为 Codex，居中显示 ChatGPT 真实头像和明文账号名，通过下拉列表切换 Codex 账号。匿名键只用于后台统计，明文显示资料不上报。详见 [本地头像账号界面](../docs/LOCAL-ACCOUNT-UI.md) 与 [新用户接入方式](../docs/MULTI-ACCOUNT-OPERATIONS.md)。
+当前已验证并安装版本为 0.8.1（2026-10-29）。桌面入口为 **Codex 用量统计**，当前用户登录时自动启动。窗口固定显示当前 Windows 用户的用量，标题为 Codex，居中显示 ChatGPT 真实头像和明文账号名，通过下拉列表切换 Codex 账号。匿名键用于后台统计；展示名称经独立接口同步到服务器，头像和其他本机资料不上报。详见 [本地头像账号界面](../docs/LOCAL-ACCOUNT-UI.md) 与 [新用户接入方式](../docs/MULTI-ACCOUNT-OPERATIONS.md)。
 
 ## 使用
 
@@ -67,7 +67,7 @@
 - 每批最多 500 条、约 500 KiB，每轮最多发 4 批；10 秒刷新服务器汇总，60 秒心跳，窗口每秒读取本地缓存并更新倒计时。
 - HTTPS 直连 `https://YOUR_SERVER_HOST/codex-usage`，不使用环境 HTTP 代理，不跟随重定向，正常验证服务器证书。
 - 不上传对话正文、标题、文件路径、原始会话 UUID、Codex 登录凭据或匿名化密钥。上传字段遵循服务端白名单。
-- 设备和租户遥测凭据使用当前 Windows 账户 DPAPI 加密，服务端只存凭据哈希。其他机器不能直接使用本机加密文件。
+- 设备和租户遥测凭据使用当前 Windows 账户 DPAPI 加密，服务端数据库存凭据哈希，原始交付文件由管理员另行保管。其他机器不能直接使用本机加密文件。
 - 流 ID、锚点和事件 ID 由共享匿名化密钥 HMAC 生成；设备身份不进入去重键。相同格式的跨设备复制需定位服务端共同基线后使用相同序号，定位失败就暂停，避免重复累计。
 - 已确认的数值检查点继续留在本机，以便审计和服务器缺段后的重放。当前没有自动历史清理策略；待传上限 50,000 条、本地数据库 500 MiB 时停止继续推进来源游标并提示。
 
@@ -86,26 +86,28 @@
 | `用户目录/state/quota-cache.json` | 首个目录的本机额度缓存；其他目录在 state/quotas |
 | `.local/client/CodexUsageMonitor.exe` | Windows 自带 .NET Framework 构建的原生 WPF 窗口 |
 | `用户目录/client.credentials` | 当前 Windows 账户加密的遥测凭据 |
-| `用户目录/state/local-profiles.json`、`state/avatars/` | 本机明文名称与头像缓存，不进入遥测或部署包 |
+| `用户目录/state/display-name-sync.json` | 名称同步确认缓存，不含访问令牌 |
+| `用户目录/state/quota-cycles.sqlite3`、`state/quota-cycle-cache.json` | 周期观察队列及当前周期查询缓存 |
+| `用户目录/state/local-profiles.json`、`state/avatars/` | 本机名称与头像缓存；仅名称通过独立接口同步，文件不进入部署包 |
 
 运行依赖为本项目已有 Python 3.12 环境（优先 `.local/venv`，其次用户安装的 Python312）及 Windows .NET Framework。前端不需要 .NET SDK 或浏览器。请保留项目路径和运行环境；移动项目后重新构建窗口、安装快捷方式和自启动。
 
 手动启动后台与窗口：
 
 ```powershell
-& 'E:\Codex\Codex-Usage-Monitor\client\Start-UsageMonitor.ps1'
+& 'C:\path\to\Codex-Usage-Monitor\client\Start-UsageMonitor.ps1'
 ```
 
 只启动后台，加 `-NoWindow`。完全停止：
 
 ```powershell
-& 'E:\Codex\Codex-Usage-Monitor\client\Stop-UsageMonitor.ps1'
+& 'C:\path\to\Codex-Usage-Monitor\client\Stop-UsageMonitor.ps1'
 ```
 
 取消登录自启动：
 
 ```powershell
-& 'E:\Codex\Codex-Usage-Monitor\client\Remove-Startup.ps1'
+& 'C:\path\to\Codex-Usage-Monitor\client\Remove-Startup.ps1'
 ```
 
 修改前端后运行 `client/Build-Window.ps1`，先关闭现有窗口再构建。快捷方式直接指向原生 EXE，不需要改变 PowerShell 执行策略。它是当前用户后台程序，不是系统服务；若采集器异常退出，可双击桌面入口重启。
@@ -125,3 +127,24 @@
 0.3.0 已核对真实活跃会话和原生窗口：显示友好标题、模型/推理强度及动态增长的整段会话 Token。四周期汇总继续同步；活跃会话数据不进入服务器账本。
 
 0.4.0 已通过 52 项客户端测试和 14 项额度显示检查；配套服务器 26 项协议、HTTP 和独立 PostgreSQL 测试通过。真实身份归属、多维分组之和与总量、窗口账号和来源筛选均已核对。147 检查点的四周期对账通过。当前实机只接入一个 Windows 用户、一个 Codex 账号；其他用户首次接入需在其会话运行 Install-User.ps1，详见实施说明。
+
+
+## 历史版本验证记录
+
+下列版本、测试数量和对账值均为当时快照，当前状态以文首与 client/RELEASE.json 为准。
+
+### 0.7.0 · 2026-10-29
+
+已部署。额度区域改为查询服务端 v3 当前周期接口，5 小时与每周分别返回，不再竞争历史查询条数。每次新的官方观察按观察时间持久化、去重和确认发送；冲突观察单独隔离。界面分别提示边界确认中、边界待核实、额度需刷新和等待新周期。服务端要求 0.4.0 / schema v4，先部署服务端再重启客户端。144 项 Python 测试、20 项周期显示检查及完整悬浮窗编译通过。
+
+
+### 0.8.0 · 2026-10-29
+
+已部署。使用独立接口异步同步当前账号展示名称；名称变化、离线重试和重启确认均不阻塞数值采集。只发送匿名账号键与展示名称，不发送头像、缓存路径或额外邮箱字段。服务器按 Windows 用户作用域保存和读取名称，网页本地备注可覆盖同步名称。原数值归属和去重键不变。
+
+148 项客户端测试、20 项周期显示检查和完整 WPF 编译通过，真实账号名称已与服务器读取结果核对一致。0.8.0 时提供过独立复制脚本；当前 0.8.1 已改为内置“网页凭据”入口，不需要运行脚本。
+
+
+### 0.8.1 · 内置网页登录凭据
+
+本机已更新。悬浮窗底部点击“网页凭据”，或右键“网页仪表盘登录…”，进入内置窗口。点击“复制用户只读凭据”并打开仪表盘粘贴登录，无需单独执行 PowerShell 脚本。程序先验证 read 凭据绑定当前 Windows 用户，拒绝管理员级或其他用户范围；只读令牌经内存管道传递，不写入状态或日志。152 项客户端测试、完整 WPF 构建及真实权限校验通过，界面复制状态已核对。服务端仍为 0.5.0。

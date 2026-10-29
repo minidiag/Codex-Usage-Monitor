@@ -6,6 +6,7 @@ using System.Numerics;
 internal sealed class CycleDisplay
 {
     internal string Tokens="—";
+    internal string StatusText="同步中";
     internal string Hint="当期 Token 统计正在同步；仅统计当前 Windows 用户。";
     internal bool Fresh;
     internal bool Ended;
@@ -28,6 +29,26 @@ internal static class CycleView
             if(Text(Get(response,"account_key"))!=account || Text(Get(response,"principal_key"))!=principal)return display;
             DateTimeOffset fetched;
             if(!DateTimeOffset.TryParse(Text(Get(response,"as_of")),CultureInfo.InvariantCulture,DateTimeStyles.None,out fetched))return display;
+            var buckets=Map(Get(response,"buckets"));
+            if(buckets.Count>0)
+            {
+                var slot=Map(Get(buckets,bucket));string status=Text(Get(slot,"status"));
+                if(status!="available")
+                {
+                    switch(status)
+                    {
+                        case "boundary_pending":display.StatusText="边界确认中";display.Hint="周期边界确认中；连续观察稳定后再显示累计。";break;
+                        case "boundary_review":display.StatusText="边界待核实";display.Hint="周期边界发生变化，待核实；原周期和用量记录保留。";break;
+                        case "observation_stale":display.StatusText="额度需刷新";display.Hint="额度需刷新；官方周期观察已过期。";break;
+                        case "waiting_new_cycle":display.StatusText="等待新周期";display.Hint="等待新周期；历史累计已保存在服务器。";break;
+                        default:display.StatusText="等待周期数据";display.Hint="等待官方周期观察。";break;
+                    }
+                    return display;
+                }
+                var current=Map(Get(slot,"cycle"));
+                response=new Dictionary<string,object>(response);
+                response["cycles"]=new object[]{current};
+            }
             Dictionary<string,object> exact=null,nearby=null;
             int nearbyCount=0;
             foreach(object item in Get(response,"cycles") as object[] ?? new object[0])

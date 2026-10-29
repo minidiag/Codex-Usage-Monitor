@@ -18,7 +18,7 @@ def migrate(dsn, schema):
         exists = db.execute("SELECT to_regclass('public.schema_version')").fetchone()[0]
         if exists:
             version = db.execute("SELECT max(version) FROM schema_version").fetchone()[0]
-            if version not in (1, 2, 3):
+            if version not in (1, 2, 3, 4, 5):
                 raise RuntimeError("Unexpected database schema version")
         else:
             db.execute(Path(schema).read_text(encoding="utf-8"))
@@ -28,6 +28,12 @@ def migrate(dsn, schema):
             version=2
         if version==2:
             db.execute((Path(schema).parent/"migrations/003_quota_cycles.sql").read_text(encoding="utf-8"))
+            version=3
+        if version==3:
+            db.execute((Path(schema).parent/"migrations/004_boundary_observations.sql").read_text(encoding="utf-8"))
+            version=4
+        if version==4:
+            db.execute((Path(schema).parent/"migrations/005_account_display_names.sql").read_text(encoding="utf-8"))
 
 
 def app_role(dsn, password):
@@ -48,6 +54,10 @@ def app_role(dsn, password):
         db.execute("GRANT UPDATE(ends_at,first_observed_at,last_observed_at) ON quota_cycles TO usage_app")
         db.execute("GRANT UPDATE(first_observed_at,last_observed_at) ON quota_cycle_observations TO usage_app")
         db.execute("GRANT UPDATE(input_tokens,cached_input_tokens,output_tokens,reasoning_output_tokens,computed_at) ON quota_cycle_totals TO usage_app")
+        db.execute("GRANT SELECT,INSERT ON quota_boundary_samples TO usage_app")
+        db.execute("GRANT SELECT,INSERT,UPDATE ON quota_boundary_states TO usage_app")
+        db.execute("GRANT SELECT,INSERT ON account_display_names TO usage_app")
+        db.execute("GRANT UPDATE(display_name,source_device_id,updated_at) ON account_display_names TO usage_app")
 
 
 def provision(dsn, output, base_url):
@@ -87,7 +97,7 @@ def main():
     dsn = os.environ["DATABASE_URL"]
     if args.command == "migrate":
         migrate(dsn, Path(__file__).with_name("schema.sql"))
-        print("Schema version 3 ready.")
+        print("Schema version 5 ready.")
     elif args.command == "app-role":
         app_role(dsn, os.environ["APP_DB_PASSWORD"])
         print("Restricted application role ready.")

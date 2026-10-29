@@ -1,6 +1,9 @@
 # Codex Usage Monitor 项目交接
 
-当前交付：客户端 0.6.0 / 服务端 0.3.0 / 数据库 3。标题 Codex、账号居中、USAGE 括号显示实际重置周期累计已部署运行；周期汇总持久化并真实对账通过。阅读 [当前周期统计说明](docs/QUOTA-CYCLES.md) 后再参考下方历史记录。
+当前交付（2026-10-29）：客户端 0.8.1 / 服务端 0.5.0 / schema v5 已部署。网页仪表盘、趋势图表、账号名称同步及采集器内置用户凭据入口已验证。客户端 152 项测试、服务端真实 PostgreSQL 61 项测试通过；下文旧版本与日期为历史快照，不代表待实现项。
+
+当前入口：[项目首页](README.md)、[网页和权限](docs/DASHBOARD.md)、[安装部署](docs/INSTALL-AND-DEPLOY.md)、[来源恢复](docs/SOURCE-REVIEW.md)、[发布清单](deploy/RELEASE.json)。
+
 
 交接日期 2026 年 10 月 25 日
 

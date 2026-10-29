@@ -1,25 +1,25 @@
 # 本地采集与服务器部署方法
 
-适用版本：客户端 0.6.0、服务端 0.3.0、数据库 3。2026-10-26 根据项目现有脚本核对。
+适用版本：客户端 0.8.1、服务端 0.5.0、schema v5。2026-10-29 根据当前脚本和部署记录核对。
 
 ## 1. 当前安装在哪里
 
 | 部分 | 当前配置 |
 |---|---|
-| Windows 程序 | `E:\Codex\Codex-Usage-Monitor` |
+| Windows 程序 | `C:\path\to\Codex-Usage-Monitor` |
 | 当前用户状态 | `%LOCALAPPDATA%\CodexUsageMonitor\<安装标识>\state` |
-| 服务器程序 | `YOUR_SERVER_HOST` 的 `/opt/codex-usage-monitor` |
-| HTTPS 地址 | `https://YOUR_SERVER_HOST/codex-usage` |
+| 当前服务器程序 | `YOUR_SERVER_HOST` 的 `/opt/codex-usage-monitor` |
+| 当前 HTTPS 地址 | `https://YOUR_SERVER_HOST/codex-usage/` |
 | 数据库 | Docker 私有网络内的 PostgreSQL，不开放公网端口 |
 
-本机及当前服务器已部署。日常使用只需打开桌面“Codex 用量统计”，无需重复初始化。
+本机及当前服务器已部署。下文安装示例中的 YOUR_SERVER_HOST 需替换为目标主机；全新服务器不能直接沿用本机凭据。日常使用只需打开桌面“Codex 用量统计”，无需重复初始化。
 
 ## 2. 已配置用户：启动、停止和检查
 
 在 PowerShell 中执行：
 
 ```powershell
-Set-Location 'E:\Codex\Codex-Usage-Monitor'
+Set-Location 'C:\path\to\Codex-Usage-Monitor'
 & .\client\Start-UsageMonitor.ps1
 ```
 
@@ -43,7 +43,9 @@ Set-Location 'E:\Codex\Codex-Usage-Monitor'
 & .\deploy\Query-Usage.ps1
 ```
 
-该查询脚本使用 PowerShell 7。正常状态是窗口“已同步”、待传队列为 0、没有错误；“部分覆盖”表示未导入旧历史或存在尚未适配的来源，不等于部署失败。
+该查询脚本使用 PowerShell 7。网页入口可通过采集器底部“网页凭据”打开：先复制本用户只读凭据，再打开仪表盘粘贴连接，不需要单独运行复制脚本。管理员总览使用独立 tenant 级 read token，详见 [网页与权限](DASHBOARD.md)。
+
+正常状态是窗口“已同步”、待传队列为 0、没有错误；“部分覆盖”表示未导入旧历史或存在尚未适配的来源，不等于部署失败。
 
 出现“部分来源暂停”时，点击该提示或右键选择“核实暂停来源…”，查看日志基线、历史检查点和服务器核实结果，并通过受控来源选择恢复。具体操作见 [来源核实与恢复](SOURCE-REVIEW.md)。
 
@@ -51,8 +53,8 @@ Set-Location 'E:\Codex\Codex-Usage-Monitor'
 
 ### 3.1 准备程序与环境
 
-1. 将本项目的程序源文件放到固定目录，例如 `E:\Codex\Codex-Usage-Monitor`。需包含 `client/` 和 `server/protocol.py` 等项目文件；服务端 tar.gz 包不含 Windows 客户端，不能用它代替完整项目。
-2. 安装当前用户可运行的 Python 3.12 或更新版本，同目录需有 `pythonw.exe`；客户端采集运行依赖使用 Python 标准库，无需安装服务端依赖。
+1. 将本项目的程序源文件放到固定目录，例如 `C:\path\to\Codex-Usage-Monitor`。需包含 `client/`、`server/protocol.py` 等项目文件；服务端 tar.gz 包不含 Windows 客户端，不能用它代替完整项目。
+2. 安装当前用户可运行的 Python 3.12 或更新版本，同目录需有 `pythonw.exe`；客户端采集运行依赖使用 Python 标准库，无需安装服务端依赖；压缩来源核实另需按 `client/requirements.txt` 安装对应依赖。
 3. 需要 Windows .NET Framework WPF 及其 `Framework64\v4.0.30319\csc.exe`。客户端不要求安装 .NET SDK。
 4. 本用户已有正常使用的 Codex 及可读取的日志目录。默认读取 `CODEX_HOME`；没有设置时读取本用户的 `~/.codex`。额度读取还需要可用的本机 `codex.exe` 和登录状态。
 
@@ -82,7 +84,7 @@ unset DATABASE_URL
 以下解释器和 JSON 路径是示例，按实际位置修改：
 
 ```powershell
-Set-Location 'E:\Codex\Codex-Usage-Monitor'
+Set-Location 'C:\path\to\Codex-Usage-Monitor'
 & .\client\Build-Window.ps1
 & .\client\Install-User.ps1 -CredentialImport 'C:\Private\collector-02.json' -PythonExe 'C:\Users\用户名\AppData\Local\Programs\Python\Python312\python.exe'
 & .\client\Start-UsageMonitor.ps1
@@ -122,11 +124,11 @@ docker pull docker.m.daocloud.io/library/postgres:18-alpine
 在项目目录中执行；若没有该虚拟环境，先用自己的 Python 3.12 创建：
 
 ```powershell
-Set-Location 'E:\Codex\Codex-Usage-Monitor'
+Set-Location 'C:\path\to\Codex-Usage-Monitor'
 py -3.12 -m venv .local/venv
 & ./.local/venv/Scripts/python.exe -m pip download --platform manylinux2014_x86_64 --python-version 312 --implementation cp --abi cp312 --only-binary=:all: -r server/requirements-test.txt -d .local/wheels
 & ./.local/venv/Scripts/python.exe deploy/package.py
-Get-FileHash .local/codex-usage-monitor-0.3.0.tar.gz -Algorithm SHA256
+Get-FileHash .local/codex-usage-monitor-0.5.0.tar.gz -Algorithm SHA256
 ```
 
 已有虚拟环境时跳过创建。打包脚本输出压缩包、SHA256 和文件清单；不包含服务器 `.env`、private 凭据或本机状态。
@@ -134,7 +136,7 @@ Get-FileHash .local/codex-usage-monitor-0.3.0.tar.gz -Algorithm SHA256
 先在目标服务器创建 `/opt/codex-usage-monitor`。从 Windows 直连传输，SSH 不使用代理：
 
 ```powershell
-scp -F NUL -o ProxyCommand=none -o ProxyJump=none .local/codex-usage-monitor-0.3.0.tar.gz .local/codex-usage-monitor-0.3.0.tar.manifest.json root@YOUR_SERVER_HOST:/opt/codex-usage-monitor/
+scp -F NUL -o ProxyCommand=none -o ProxyJump=none .local/codex-usage-monitor-0.5.0.tar.gz .local/codex-usage-monitor-0.5.0.tar.manifest.json root@YOUR_SERVER_HOST:/opt/codex-usage-monitor/
 ssh -F NUL -o ProxyCommand=none -o ProxyJump=none root@YOUR_SERVER_HOST
 ```
 
@@ -142,8 +144,8 @@ ssh -F NUL -o ProxyCommand=none -o ProxyJump=none root@YOUR_SERVER_HOST
 
 ```sh
 cd /opt/codex-usage-monitor
-sha256sum codex-usage-monitor-0.3.0.tar.gz
-tar -xzf codex-usage-monitor-0.3.0.tar.gz
+sha256sum codex-usage-monitor-0.5.0.tar.gz
+tar -xzf codex-usage-monitor-0.5.0.tar.gz
 sh deploy/bootstrap.sh
 sh deploy/test-database.sh
 curl -fsS http://127.0.0.1:8190/health/ready
@@ -180,6 +182,8 @@ sh deploy/test-database.sh
 docker compose --env-file deploy/.env -f deploy/compose.yml ps
 curl -fsS http://127.0.0.1:8190/health/ready
 ```
+
+健康和真实权限/账本检查通过后，将 `USAGE_IMAGE=codex-usage-monitor:0.5.0` 写入现有 `deploy/.env`，再更新并重启本机客户端。失败时选择旧镜像恢复 API，保留数据库及其新增数据；不要先覆盖备份。当前服务已完成这些步骤，无需重复升级。
 
 另保存升级前源码及配置备份；备份目录 `backups/`、私有配置 `deploy/.env`、`private/client.json` 都需要妥善保管。不得执行 `docker compose down -v` 删除数据卷。日常备份由已配置的 `codex-usage-backup.timer` 运行；当前没有异地副本。
 

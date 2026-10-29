@@ -4,11 +4,11 @@
 
 安装与部署请先按 [当前操作步骤](../docs/INSTALL-AND-DEPLOY.md) 执行，区分现有主机升级与新主机首次安装。
 
-2026-10-26 已升级服务器 0.3.0 / 数据库版本 3，并接入 Windows 客户端 0.6.0。新增 POST/GET `/v2/usage/quota-cycles` 保存与查询实际额度重置周期的累计用量，详见 [周期说明](../docs/QUOTA-CYCLES.md)。多账号与多 Windows 用户的当前操作以 [实施说明](../docs/MULTI-ACCOUNT-OPERATIONS.md) 为准；下文首版记录保留为历史。新增 `/v2/identity`、`/v2/identities`、`/v2/usage/summary`，支持匿名账号/用户/电脑过滤和分组，旧协议继续兼容。镜像可由 `USAGE_IMAGE` 选择，默认 `codex-usage-monitor:0.3.0`。
+2026-10-29 当前为服务端 0.5.0 / schema v5 / 客户端 0.8.1。默认镜像 `codex-usage-monitor:0.5.0`，实际运行镜像由 `deploy/.env` 的 USAGE_IMAGE 决定。网页、趋势、展示名称同步和本机用户凭据入口见 [仪表盘说明](../docs/DASHBOARD.md)，当前验证清单见 [发布记录](RELEASE.json)。旧日期、快照和首版接口记录按对应版本阅读。
 
-主机为用户指定的 `YOUR_SERVER_HOST`，Alibaba Cloud Linux 3，约 2 GB 内存。服务根目录 `/opt/codex-usage-monitor`，Compose 项目名 `codex-usage-monitor`。
+当前主机为用户指定的 `YOUR_SERVER_HOST`，Alibaba Cloud Linux 3，约 2 GB 内存。服务根目录 `/opt/codex-usage-monitor`，Compose 项目名 `codex-usage-monitor`。
 
-公网基地址 `https://YOUR_SERVER_HOST/codex-usage`。Nginx 终止 TLS，转发到 `127.0.0.1:8190`；数据库不发布主机端口，只连接项目私有网络。API 另接 edge 桥接网络用于回环地址端口发布。此主机 Docker 26 在只连接 internal 网络时未实际建立端口转发，已通过增加 edge 网络解决。
+当前公网基地址 `https://YOUR_SERVER_HOST/codex-usage`，仪表盘入口为其尾部加 `/`。下面通用命令中的 YOUR_SERVER_HOST 按实际目标替换。Nginx 终止 TLS，转发到 `127.0.0.1:8190`；数据库不发布主机端口，只连接项目私有网络。API 另接 edge 桥接网络用于回环地址端口发布。此主机 Docker 26 在只连接 internal 网络时未实际建立端口转发，已通过增加 edge 网络解决。
 
 现有 `/` 和 `/ota/` 路由继续使用原配置。仅在 `/etc/nginx/conf.d/benchlink.conf` 的 HTTPS server 内新增一个 include，指向 `/etc/nginx/codex-usage.location.conf`。原配置备份在项目 `private/nginx-*.conf`。修改前后均运行 `nginx -t`，通过后 reload。
 
@@ -26,6 +26,8 @@ DD 建议的服务端 .NET 10 在首版改为 Python 3.12 + Starlette + Psycopg�
 
 ## API 与凭据
 
+当前网页为 `/codex-usage/`，JSON 存活检查在 `/health/live`。v1 核心接口保留兼容，v2 账号/分组接口、v3 当前额度周期、趋势及名称接口已部署。用户凭据通过采集器内置入口复制；tenant 管理员只读凭据由管理员从初始交付文件单独保管。本机入口会拒绝 tenant token，不提供提升权限功能。名称字段是独立元数据，不混入数值事件。完整权限表见 [网页说明](../docs/DASHBOARD.md)。
+
 基地址下实现：
 
 | 方法和路径 | 凭据 |
@@ -40,7 +42,7 @@ DD 建议的服务端 .NET 10 在首版改为 Python 3.12 + Starlette + Psycopg�
 
 `server.admin provision --output /private/client.json` 初次建立租户、设备及相互分离的 read/write 凭据，原始凭据只写权限 600 文件，数据库存 SHA256。`identity_key` 独立于上传令牌，供将来客户端跨设备生成匿名流 ID；该密钥不需要发送到查询接口。
 
-服务器初次凭据在 `/opt/codex-usage-monitor/private/client.json`，仅 root 可读。本机已通过 SCP 取得并用 Windows 当前账户 DPAPI 加密为 `.local/client.credentials`；中间明文文件已删除。更换 Windows 账户或机器需重新交付，不应将加密文件当作跨机器可移植配置。
+服务器初次凭据在 `/opt/codex-usage-monitor/private/client.json`，仅 root 可读。当前每用户凭据位于 `%LOCALAPPDATA%/CodexUsageMonitor/<安装标识>/client.credentials`，由该 Windows 用户 DPAPI 加密；旧版本曾保存在 `.local/client.credentials`；中间明文文件已删除。更换 Windows 账户或机器需重新交付，不应将加密文件当作跨机器可移植配置。
 
 本机 `deploy/Query-Usage.ps1` 解密后仅用 read 凭据查询，不打印令牌。原始 JSON 导出使用 `-AsJson`。Windows 采集与数值上报已启用。
 
@@ -108,3 +110,17 @@ Windows 常规累计检查点适配、SQLite 游标和 Outbox、独立后台、�
 压缩补充用量、子代理继承、压缩文件、WSL 与完整历史导入仍待适配。本次采用捕获起点基线，较早的历史不会被全部归入启用当天。生产库已开始接收真实数值，不再是无记录状态。当前服务端 RELEASE.json 的 0 条记录描述的是 2026-10-25 服务端交付时快照，客户端后续状态以 client 交付记录和实际查询为准。
 
 客户端访问继续使用 IP HTTPS。SSH 使用 `-F NUL -o ProxyCommand=none -o ProxyJump=none` 直连；用户已关闭全局 VPN。本次先前添加的临时 `/32` WLAN 路由非持久化，重启后消失。如重新开启全局 VPN，其流量保护仍可能拦截直连，需要由用户配置分流。
+
+
+## schema v4 周期观察升级
+
+先备份并在独立库运行 `deploy/test-database.sh`，再停止 api、运行 `server.admin migrate` 与 `server.admin app-role`，启动服务端 0.4.0 后才重启客户端 0.7.0。正式迁移只新增观察表和当前状态，采纳仍有效的旧周期，不改写旧账本或历史边界。新接口与状态详见 `docs/QUOTA-CYCLES.md`。
+
+`python -m server.audit_cycles` 需要只读可访问旧周期表的 DATABASE_URL，输出匿名历史候选报告，不进行清理。0.4.0 回滚可恢复旧源码备份并选择旧镜像 0.3.0；v4 为增量表结构，保留数据库，避免覆盖上线后新数据；客户端也需恢复旧可执行文件和旧源码。数据库恢复仅用于灾难恢复，应先另存当前库。
+
+
+## 0.5.0 网页与名称同步升级
+
+明确指定 `USAGE_IMAGE=codex-usage-monitor:0.5.0`，先备份与独立库完整测试，再暂停 api、运行 `server.admin migrate` 与 `server.admin app-role`（新增名称表权限），启动服务端后才重启客户端。测试脚本保留调用者明确指定的候选镜像，避免被生产 `.env` 中的旧镜像覆盖。
+
+v5 仅新增展示名称表，不改变旧数值表。网页入口 `/codex-usage/`，原 JSON 状态在 `/codex-usage/health/live`。所有数据接口仍要求现有只读凭据。上线后核对名称权限、真实趋势与账本、观察队列和旧客户端查询。回滚可选择 0.4.0 镜像并恢复对应源文件，保留数据库中的新增表和上线后用量；不要用升级前备份覆盖上线后新数据。

@@ -42,6 +42,17 @@ internal static class CycleViewTests
         Check(CycleView.Read(data,account,principal,"primary",reset,300,now).Ended,"ambiguous nearby cycles never guessed");
         Check(CycleView.Read(null,account,principal,"primary",reset,300,now).Tokens=="—","missing data is not zero");
         Check(CycleView.Read(data,account,principal,"primary",null,300,now).Tokens=="—","unknown reset is not guessed");
+        cycle["ends_at"]=now.AddHours(3).ToString("o");
+        var slot=new Dictionary<string,object>{{"status","available"},{"cycle",cycle}};
+        response["buckets"]=new Dictionary<string,object>{{"primary",slot}};
+        response["cycles"]=new object[0];
+        Check(CycleView.Read(data,account,principal,"primary",reset,300,now).Tokens!="—","current slot does not need history records");
+        foreach(string state in new[]{"boundary_pending","boundary_review","observation_stale","waiting_new_cycle"})
+        {
+            slot["status"]=state;
+            value=CycleView.Read(data,account,principal,"primary",reset,300,now);
+            Check(value.Tokens=="—" && value.StatusText!="同步中","boundary state is explicit and never a fake zero");
+        }
         Console.WriteLine("Cycle view: "+count+" checks passed.");
     }
 }

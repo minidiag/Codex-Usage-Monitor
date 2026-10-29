@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Codex · 用量仪表盘</title><link rel="stylesheet" href="dashboard/dashboard.css"><script src="dashboard/dashboard.js" defer></script></head>
+<body>
+<aside class="rail"><div class="brand">C<span>Codex<br><small>USAGE MONITOR</small></span></div><div class="nav active">◫ <span>用量概览</span></div><div class="rail-bottom">自己的用量，清楚可见。<br><span>服务器账本 · 北京时间</span></div></aside>
+<main>
+<header><div><div class="eyebrow">WORKSPACE / ANALYTICS</div><h1>用量仪表盘</h1><p>按账号查看已采集 Token，了解每一段使用趋势。</p></div><div class="header-actions"><span id="connection" class="badge">尚未连接</span><button id="logout" hidden>断开连接</button></div></header>
+<section id="login" class="panel login"><div class="login-icon">↗</div><div><h2>连接你的用量账本</h2><p>使用此服务的遥测只读凭据。凭据仅保存在当前页面内存，刷新或断开后清除。</p><form id="login-form"><label for="token">只读凭据</label><div class="login-row"><input id="token" type="password" autocomplete="off" spellcheck="false" placeholder="输入遥测 read_token" required minlength="32" maxlength="256"><button class="primary" type="submit">连接账本 →</button></div></form><p class="muted">这不是 Codex 登录凭据或 OpenAI API Key。数据访问范围沿用该凭据的账号与用户权限。</p></div></section>
+<div id="message" role="status" aria-live="polite" hidden></div>
+<div id="workspace" hidden>
+<section class="toolbar"><div class="filter"><label for="account">Codex 账号</label><select id="account"><option value="">全部账号（含未知归属）</option></select><button id="rename" title="仅保存在此浏览器">备注名</button></div><div class="toolbar-right"><label class="sr-only" for="period">统计时间</label><select id="period"><option value="24h">最近 24 小时</option><option value="7d" selected>近 7 日</option><option value="30d">近 30 日</option><option value="90d">近 90 日</option></select><button id="refresh">↻ 刷新</button></div></section>
+<div class="scope-line"><span id="scope"></span><span id="updated">等待查询</span></div>
+<section class="cards" aria-label="用量统计">
+<article class="card total"><div class="card-label">已采集 Token <span>↗</span></div><strong id="stat-total">—</strong><small>输入 + 输出</small></article>
+<article class="card"><div class="card-label">输入 Token <span class="dot teal"></span></div><strong id="stat-input">—</strong><small>包含缓存输入</small></article>
+<article class="card"><div class="card-label">输出 Token <span class="dot violet"></span></div><strong id="stat-output">—</strong><small>包含推理输出</small></article>
+<article class="card"><div class="card-label">缓存输入 <span>◷</span></div><strong id="stat-cached_input">—</strong><small id="cache-share">输入的子集，不重复计数</small></article>
+</section>
+<section class="panel trend-panel"><div class="panel-heading"><div><div class="eyebrow">TOKEN ACTIVITY</div><h2>用量趋势</h2><p id="range">按北京时间聚合</p></div><div class="view-controls"><label class="sr-only" for="metric">显示指标</label><select id="metric"><option value="total">总 Token</option><option value="input">输入</option><option value="output">输出</option><option value="cached_input">缓存输入</option><option value="reasoning_output">推理输出</option></select><div class="segmented" role="group" aria-label="显示方式"><button id="show-chart" aria-pressed="true">▥ 图形</button><button id="show-table" aria-pressed="false">▤ 表格</button></div></div></div>
+<div id="chart-view"><div class="chart-legend"><span><i class="dot teal"></i> <span id="legend-primary">输入</span></span><span id="legend-output"><i class="dot violet"></i> 输出</span><span id="events" class="muted"></span></div><div id="chart" class="chart"></div><p id="empty" class="empty" hidden>这一时间范围内没有已采集的用量记录。</p></div>
+<div id="table-view" class="table-wrap" hidden><table><caption class="sr-only">用量趋势明细，单位 Token</caption><thead><tr><th>北京时间</th><th>输入</th><th>缓存输入</th><th>输出</th><th>推理输出</th><th>总量</th><th>增量条数</th></tr></thead><tbody id="rows"></tbody><tfoot id="table-total"></tfoot></table></div>
+<div class="panel-footer"><span>时间分桶内的已采集增量 · 首尾时间段可能不完整</span><button id="export">导出 CSV ↓</button></div></section>
+<footer><span class="coverage">● 部分覆盖</span> 仅统计已采集并确认归属的用量；全部账号视图也包含未知归属。未采集的历史不会补算。<br>缓存输入与推理输出是子集；本页 Token 统计不代表官方账单或额度百分比。</footer>
+</div></main>
+<dialog id="alias-dialog" class="alias-dialog"><form id="alias-form"><h2>账号备注名</h2><p>仅保存在当前浏览器。留空后，恢复显示服务器同步的名称。</p><label for="alias-input">本地备注</label><input id="alias-input" maxlength="60" autocomplete="off"><div class="dialog-actions"><button id="alias-cancel" type="button">取消</button><button class="primary" type="submit">保存备注</button></div></form></dialog>
+</body></html>

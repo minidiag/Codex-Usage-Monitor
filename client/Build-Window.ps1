@@ -1,8 +1,9 @@
+param([string]$OutputPath)
 $ErrorActionPreference='Stop'
 $usageRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $usageFramework=Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319'
 $usageCompiler=Join-Path $usageFramework 'csc.exe'
-$usageOutput=Join-Path $usageRoot '.local/client/CodexUsageMonitor.exe'
+$usageOutput=if ($OutputPath) { [IO.Path]::GetFullPath($OutputPath) } else { Join-Path $usageRoot '.local/client/CodexUsageMonitor.exe' }
 [void](New-Item -ItemType Directory -Force -Path ([IO.Path]::GetDirectoryName($usageOutput)))
 $usageReferences=@('System.dll','System.Core.dll','System.Numerics.dll','System.Xaml.dll','System.Web.Extensions.dll','WPF/PresentationFramework.dll','WPF/PresentationCore.dll','WPF/WindowsBase.dll')
 $usageCompilerArgs=@('/nologo','/target:winexe','/optimize+',('/out:'+$usageOutput))
@@ -13,6 +14,7 @@ $usageCompilerArgs+=(Join-Path $PSScriptRoot 'AccountView.cs')
 $usageCompilerArgs+=(Join-Path $PSScriptRoot 'CycleView.cs')
 $usageCompilerArgs+=(Join-Path $PSScriptRoot 'SourceReviewWindow.cs')
 $usageCompilerArgs+=(Join-Path $PSScriptRoot 'ProxySettingsWindow.cs')
+$usageCompilerArgs+=(Join-Path $PSScriptRoot 'DashboardAccessWindow.cs')
 & $usageCompiler $usageCompilerArgs
 if ($LASTEXITCODE -ne 0) { throw '悬浮窗编译失败。' }
 Write-Output '桌面悬浮窗已构建。'

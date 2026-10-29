@@ -85,6 +85,18 @@ class HttpBoundaryTests(unittest.TestCase):
         for query in ("account=bad","account="+"a"*64+"&account="+"b"*64,"group_by=account,account","group_by=tenant","tenant_id=x"):
             self.assertEqual(self.client.get("/v2/usage/summary?"+query,headers=self.auth).status_code,422)
 
+    def test_current_and_history_filters_reject_invalid_or_duplicate_scope(self):
+        account='account='+'a'*64
+        for query in ('account=bad',account+'&account='+'b'*64,account+'&tenant_id=x'):
+            for endpoint in ('quota-current','quota-history'):
+                self.assertEqual(self.client.get('/v3/usage/'+endpoint+'?'+query,headers=self.auth).status_code,422)
+        for query in (account,account+'&bucket=unknown',account+'&bucket=primary&limit=201',account+'&bucket=primary&before=bad'):
+            self.assertEqual(self.client.get('/v3/usage/quota-history?'+query,headers=self.auth).status_code,422)
+
+    def test_observation_validation_precedes_database_access(self):
+        for value in ({'cycles':[]},{'cycles':[{}]}, {'cycles':'bad'}):
+            self.assertEqual(self.client.post('/v3/usage/quota-observations',headers=self.auth,json=value).status_code,422)
+
     def test_size_encoding_and_json_validation(self):
         result = self.client.post("/v1/usage/batches", headers=self.auth, json={"bad": "field"})
         self.assertEqual(result.status_code, 422)

@@ -8,6 +8,26 @@ DIMENSIONS = {"account": "account_key", "principal": "principal_key", "machine":
 
 
 class IdentityStore:
+    def record_display_names(self,token,rows):
+        with self.connect() as db:
+            auth=self.authenticate(db,token,'write');tenant=auth['tenant_id']
+            subject=db.execute('SELECT principal_key FROM device_subjects WHERE tenant_id=%s AND device_id=%s',(tenant,auth['device_id'])).fetchone()
+            if not subject:raise ApiError('identity_not_registered',403)
+            principal=subject['principal_key']
+            for row in sorted(rows,key=lambda r:r['account_key']):
+                account=row['account_key']
+                known=db.execute('''SELECT 1 FROM event_subjects WHERE tenant_id=%s AND account_key=%s AND principal_key=%s
+                    UNION ALL SELECT 1 FROM quota_boundary_samples o JOIN device_subjects ds USING(tenant_id,device_id)
+                    WHERE o.tenant_id=%s AND o.account_key=%s AND ds.principal_key=%s LIMIT 1''',
+                    (tenant,account,principal,tenant,account,principal)).fetchone()
+                if not known:raise ApiError('account_not_observed',403)
+                db.execute('''INSERT INTO account_display_names(tenant_id,account_key,principal_key,display_name,source_device_id)
+                    VALUES(%s,%s,%s,%s,%s) ON CONFLICT(tenant_id,account_key,principal_key) DO UPDATE SET
+                    display_name=EXCLUDED.display_name,source_device_id=EXCLUDED.source_device_id,updated_at=now()
+                    WHERE account_display_names.display_name IS DISTINCT FROM EXCLUDED.display_name''',
+                    (tenant,account,principal,row['display_name'],auth['device_id']))
+        return dict(recorded=len(rows))
+
     def register_identity(self, token, value):
         with self.connect() as db:
             auth = self.authenticate(db, token, "write")
@@ -61,10 +81,17 @@ class IdentityStore:
             subjects = db.execute("SELECT DISTINCT principal_key,machine_key FROM device_subjects WHERE tenant_id=%s AND (%s::text IS NULL OR principal_key=%s)",
                                   (auth["tenant_id"], allowed, allowed)).fetchall()
             accounts = db.execute("""SELECT DISTINCT a.account_key FROM accounts a WHERE a.tenant_id=%s AND
-                (%s::text IS NULL OR EXISTS(SELECT 1 FROM event_subjects s WHERE s.tenant_id=a.tenant_id AND s.account_key=a.account_key AND s.principal_key=%s)) ORDER BY a.account_key""",
-                (auth["tenant_id"], allowed, allowed)).fetchall()
+                (%s::text IS NULL OR EXISTS(SELECT 1 FROM event_subjects s WHERE s.tenant_id=a.tenant_id AND s.account_key=a.account_key AND s.principal_key=%s)
+                OR EXISTS(SELECT 1 FROM quota_boundary_samples o JOIN device_subjects ds USING(tenant_id,device_id)
+                WHERE o.tenant_id=a.tenant_id AND o.account_key=a.account_key AND ds.principal_key=%s)) ORDER BY a.account_key""",
+                (auth["tenant_id"], allowed, allowed, allowed)).fetchall()
+            names=db.execute('''SELECT DISTINCT ON(account_key) account_key,display_name,updated_at FROM account_display_names
+                WHERE tenant_id=%s AND account_key=ANY(%s) AND (%s::text IS NULL OR principal_key=%s)
+                ORDER BY account_key,updated_at DESC,principal_key''',
+                (auth['tenant_id'],[r['account_key'] for r in accounts],allowed,allowed)).fetchall()
         return dict(accounts=[r["account_key"] for r in accounts], subjects=[dict(r) for r in subjects],
-                    scope="tenant" if allowed is None else "principal", principal_key=allowed)
+                    scope="tenant" if allowed is None else "principal", principal_key=allowed,
+                    account_display_names={r['account_key']:dict(display_name=r['display_name'],updated_at=iso(r['updated_at'])) for r in names})
 
     def summary_scoped(self, token, filters=None, group_by=None, now=None, legacy_device=None):
         with self.connect() as db:

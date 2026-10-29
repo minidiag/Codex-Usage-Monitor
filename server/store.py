@@ -7,11 +7,12 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from server.identities import IdentityStore
 from server.cycles import QuotaCycleStore
+from server.dashboard import DashboardStore
 
 from server.protocol import ApiError, COUNTERS, UTC, iso, windows, token_hash
 
 
-class Store(IdentityStore,QuotaCycleStore):
+class Store(IdentityStore,QuotaCycleStore,DashboardStore):
     def __init__(self, dsn=None):
         self.dsn = dsn or os.environ["DATABASE_URL"]
 

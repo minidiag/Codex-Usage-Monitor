@@ -54,6 +54,20 @@ class CycleTests(unittest.TestCase):
         self.assertEqual({r["totals"]["total"] for r in own["cycles"]},{"100"})
         with self.assertRaises(ApiError):self.store.quota_cycle_history(restricted,"a"*64,"2"*64)
 
+    def test_active_primary_is_not_hidden_by_later_weekly_history(self):
+        write,restricted=self.register(restricted=True)
+        now=datetime.now(UTC).replace(microsecond=0)
+        self.report(write,end=now+timedelta(hours=1))
+        for offset in range(12):
+            self.report(write,end=now+timedelta(days=6,seconds=offset),bucket="secondary",duration=10080)
+        self.usage(write,"a",100,"a"*64)
+        rows=self.store.quota_cycle_history(restricted,"a"*64,limit=8)["cycles"]
+        self.assertEqual(len(rows),8)
+        active={r["bucket"]:r for r in rows if not r["closed"]}
+        self.assertEqual(set(active),{"primary","secondary"})
+        self.assertEqual(active["primary"]["totals"]["total"],"100")
+        self.assertEqual(active["secondary"]["totals"]["total"],"100")
+
     def test_exact_reset_boundary_and_late_old_period_upload(self):
         write,_=self.register();self.old_subject()
         end=datetime.now(UTC).replace(microsecond=0)-timedelta(hours=1)

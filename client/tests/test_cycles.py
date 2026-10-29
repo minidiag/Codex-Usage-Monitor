@@ -4,9 +4,10 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
+from urllib.parse import parse_qs,urlsplit
 
 from client.cycles import CycleMonitor,observed_cycles
-from client.transport import ApiFailure
+from client.transport import Api,ApiFailure
 from server.protocol import UTC,iso
 
 ACCOUNT="a"*64
@@ -95,6 +96,61 @@ class CycleClientTests(unittest.TestCase):
         self.assertEqual(states,{"primary":-1,"secondary":0})
         self.monitor.observe([q],[ACCOUNT])
         self.assertEqual(self.monitor.snapshot()["blocked_reports"],1)
+
+    def test_old_server_weekly_history_does_not_hide_primary_from_cache(self):
+        now=datetime.now(UTC)
+        primary=dict(bucket="primary",resets_at=str(int(now.timestamp())+3600),totals=dict(total="12345"))
+        weekly=[dict(bucket="secondary",resets_at=str(int(now.timestamp())+86400+i),totals=dict(total="10")) for i in range(20)]
+        history=sorted([primary]+weekly,key=lambda c:int(c["resets_at"]),reverse=True)
+        requested=[]
+        class OldServer(Api):
+            def __init__(self):pass
+            def request(self,path,scope="write",data=None):
+                query=parse_qs(urlsplit(path).query)
+                requested.append((scope,query))
+                return dict(account_key=query["account"][0],principal_key=query["principal"][0],
+                            as_of=iso(now),cycles=history[:int(query["limit"][0])])
+        cached=OldServer().quota_cycles(ACCOUNT,PRINCIPAL)
+        self.assertIn(primary,cached["cycles"])
+        self.assertEqual(requested[0][0],"read")
+        self.assertEqual(requested[0][1]["principal"],[PRINCIPAL])
+
+    def test_conflicting_observation_does_not_block_current_query(self):
+        class NewApi:
+            def record_boundary_observations(self,rows):
+                if any(r['bucket']=='primary' for r in rows):raise ApiFailure(409,'observation_conflict')
+                return dict(recorded=len(rows))
+            def current_quota_cycles(self,account,principal):
+                return dict(account_key=account,principal_key=principal,as_of=iso(datetime.now(UTC)),
+                    buckets={b:dict(status='boundary_pending',cycle=None) for b in ('primary','secondary')})
+        self.monitor.api=NewApi()
+        q=quota();q['windows'].append(dict(key='secondary',duration_mins=10080,resets_at=int(datetime.now(UTC).timestamp())+86400))
+        self.monitor.observe([q],[ACCOUNT]);self.monitor._run(PRINCIPAL,ACCOUNT)
+        self.assertEqual(dict(self.monitor.db.execute('SELECT bucket,pending FROM boundary_observations')),{'primary':-1,'secondary':0})
+        self.assertIn(ACCOUNT,self.monitor.snapshot()['accounts'])
+        self.assertEqual(self.monitor.snapshot()['blocked_reports'],1)
+
+    def test_distinct_observations_survive_restart_and_use_current_endpoint(self):
+        class NewApi:
+            received=[]
+            def record_boundary_observations(self,rows):self.received.extend(rows);return dict(recorded=len(rows))
+            def current_quota_cycles(self,account,principal):
+                return dict(account_key=account,principal_key=principal,as_of=iso(datetime.now(UTC)),
+                    buckets={b:dict(status='boundary_pending',cycle=None) for b in ('primary','secondary')})
+        api=NewApi();self.monitor.api=api
+        now=datetime.now(UTC)
+        for seconds in (0,30,60):
+            q=quota(now-timedelta(seconds=seconds));self.monitor.observe([q],[ACCOUNT],now)
+            self.monitor.observe([q],[ACCOUNT],now)
+        self.assertEqual(self.monitor.db.execute('SELECT count(*) FROM boundary_observations').fetchone()[0],3)
+        self.assertEqual(self.monitor.db.execute('SELECT count(*) FROM reports').fetchone()[0],0)
+        other=CycleMonitor(Path(self.temp.name),api)
+        try:
+            other._run(PRINCIPAL,ACCOUNT)
+            self.assertEqual(len(api.received),3)
+            self.assertEqual(other.db.execute('SELECT count(*) FROM boundary_observations WHERE pending=1').fetchone()[0],0)
+            self.assertIn('buckets',other.snapshot()['accounts'][ACCOUNT])
+        finally:other.close()
 
 
 if __name__=="__main__":unittest.main()

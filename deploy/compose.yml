@@ -23,7 +23,7 @@ services:
       driver: json-file
       options: {max-size: "10m", max-file: "3"}
   api:
-    image: ${USAGE_IMAGE:-codex-usage-monitor:0.3.0}
+    image: ${USAGE_IMAGE:-codex-usage-monitor:0.5.0}
     build:
       context: ..
       dockerfile: server/Dockerfile

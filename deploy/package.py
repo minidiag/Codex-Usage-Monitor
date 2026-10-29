@@ -5,7 +5,13 @@ from pathlib import Path
 import tarfile
 
 root = Path(__file__).resolve().parents[1]
-output = root / ".local" / "codex-usage-monitor-0.3.0.tar.gz"
+output = root / ".local" / "codex-usage-monitor-0.5.0.tar.gz"
+wheel_root = root / ".local" / "wheels"
+if not any(wheel_root.glob("*.whl")):
+    wheel_root = root / "wheels"
+if not any(wheel_root.glob("*.whl")):
+    raise RuntimeError("Offline dependency wheels are required for a deployable archive")
+output.parent.mkdir(parents=True, exist_ok=True)
 manifest = {}
 with tarfile.open(output, "w:gz") as archive:
     for folder in ("server", "deploy"):
@@ -16,7 +22,7 @@ with tarfile.open(output, "w:gz") as archive:
             name = path.relative_to(root).as_posix()
             manifest[name] = hashlib.sha256(path.read_bytes()).hexdigest()
             archive.add(path, arcname=name, recursive=False)
-    for path in sorted((root / ".local" / "wheels").glob("*.whl")):
+    for path in sorted(wheel_root.glob("*.whl")):
         name = "wheels/" + path.name
         manifest[name] = hashlib.sha256(path.read_bytes()).hexdigest()
         archive.add(path, arcname=name, recursive=False)

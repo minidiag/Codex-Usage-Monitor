@@ -1,6 +1,6 @@
-# 多用户与多账号：0.4.0 使用和维护
+# 多用户与多账号：使用和维护
 
-2026-10-26。本文保留 0.4.0 多用户采集与服务器接入说明。当前客户端已升为 0.6.0，窗口固定为当前 Windows 用户，并使用真实头像和明文姓名切换账号，具体以 [本地账号界面说明](LOCAL-ACCOUNT-UI.md) 为准。服务器已升为 0.3.0、数据库版本 3，兼容协议 1.0/1.1；新增额度周期元数据及持久汇总，见 [周期统计](QUOTA-CYCLES.md)。第二个真实 Windows 登录会话尚未验收。
+当前客户端 0.8.1、服务器 0.5.0、schema v5，兼容数值协议 1.0/1.1。本机窗口固定当前 Windows 用户；网页根据 read token 范围显示本用户或租户总览。Codex 展示名称可同步，头像仍仅本机保留。参见 [网页与凭据权限](DASHBOARD.md)、[安装部署](INSTALL-AND-DEPLOY.md) 和 [当前周期统计](QUOTA-CYCLES.md)。第二个真实 Windows 登录及跨机器验收仍未完成。
 
 ## 已实现的统计关系
 
@@ -13,9 +13,9 @@
 - Windows 主体由电脑标识和当前进程的 Windows SID 匿名化生成；同名 Windows 用户不自动合并。不同电脑上的 Windows 用户分别统计。
 - 上报实例身份与逻辑事件身份分离。复制日志、重试、跨实例上传不会创建第二份数值，也不会把已确认执行用户改为副本上传者。
 
-## 窗口操作
+## 历史窗口操作（客户端 0.4.0）
 
-本节记录 0.4.0 的管理范围选择；0.5.0 已移除本地 Windows 用户/电脑选择，管理员跨用户统计通过独立服务器查询工具进行。
+本节仅保留 0.4.0 的旧管理范围选择，不作为当前界面操作说明。当前窗口只切换本用户账号；管理员跨用户统计通过网页 tenant 级凭据或独立查询工具完成。
 
 顶部新增两个选择框，条件取交集：
 
@@ -49,7 +49,7 @@
 默认扫描本用户的 `CODEX_HOME`，未设置时为 `~/.codex`。使用多个独立 Codex 数据目录时，在本用户运行：
 
 ```powershell
-& 'E:\Codex\Codex-Usage-Monitor\client\Install-User.ps1' `
+& 'C:\path\to\Codex-Usage-Monitor\client\Install-User.ps1' `
   -PythonExe 'C:\Path\To\Python312\python.exe' `
   -CodexHome 'C:\Path\To\Codex-A','C:\Path\To\Codex-B'
 ```
@@ -76,7 +76,7 @@ docker compose --env-file deploy/.env -f deploy/compose.yml run --rm -T --no-dep
 输出文件不得覆盖已有凭据。安全交付到目标 Windows 用户后，在该用户会话中运行：
 
 ```powershell
-& 'E:\Codex\Codex-Usage-Monitor\client\Install-User.ps1' `
+& 'C:\path\to\Codex-Usage-Monitor\client\Install-User.ps1' `
   -CredentialImport 'C:\Path\To\collector-02.json' `
   -PythonExe 'C:\Path\To\Python312\python.exe'
 ```

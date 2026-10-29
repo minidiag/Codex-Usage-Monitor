@@ -1,10 +1,88 @@
 """Persist observed quota windows and materialized, deduplicated per-principal token totals."""
 from datetime import datetime,timedelta
+import secrets
+from psycopg.types.json import Jsonb
+from server.boundaries import observe
 
 from server.protocol import ApiError,COUNTERS,UTC,iso
 
 
 class QuotaCycleStore:
+    def record_boundary_observations(self,token,rows):
+        with self.connect() as db:
+            auth=self.authenticate(db,token,'write');tenant=auth['tenant_id']
+            subject=db.execute('SELECT * FROM device_subjects WHERE tenant_id=%s AND device_id=%s',(tenant,auth['device_id'])).fetchone()
+            if not subject:raise ApiError('identity_not_registered',403)
+            now=datetime.now(UTC);affected=set()
+            for account in sorted({r['account_key'] for r in rows}):
+                db.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))',(str(tenant)+'/quota/'+account,))
+            for row in sorted(rows,key=lambda r:r['observed_at']):
+                if row['observed_at']>now+timedelta(minutes=5):raise ApiError('cycle_clock_anomaly')
+                account,bucket=row['account_key'],row['bucket']
+                db.execute('INSERT INTO accounts(tenant_id,account_key) VALUES(%s,%s) ON CONFLICT DO NOTHING',(tenant,account))
+                prior=db.execute('SELECT * FROM quota_boundary_samples WHERE tenant_id=%s AND account_key=%s AND bucket=%s AND device_id=%s AND observed_at=%s',
+                    (tenant,account,bucket,auth['device_id'],row['observed_at'])).fetchone()
+                if prior:
+                    if prior['resets_at']!=row['resets_at'] or prior['duration_mins']!=row['duration_mins']:raise ApiError('observation_conflict',409)
+                    continue
+                db.execute('INSERT INTO quota_boundary_samples VALUES(%s,%s,%s,%s,%s,%s,%s)',
+                    (tenant,account,bucket,auth['device_id'],row['observed_at'],row['resets_at'],row['duration_mins']))
+                saved=db.execute('SELECT state FROM quota_boundary_states WHERE tenant_id=%s AND account_key=%s AND bucket=%s',(tenant,account,bucket)).fetchone()
+                state,create=observe(saved['state'] if saved else {},int(row['resets_at'].timestamp()),row['duration_mins'],row['observed_at'].timestamp())
+                if create:
+                    candidate=state.pop('candidate');end=datetime.fromtimestamp(candidate['reset'],UTC)
+                    start=end-timedelta(minutes=candidate['duration'])
+                    # A stable observation may match a preserved legacy cycle exactly.
+                    existing=db.execute('SELECT * FROM quota_cycles WHERE tenant_id=%s AND account_key=%s AND bucket=%s AND (resets_at=%s OR starts_at=%s)',(tenant,account,bucket,end,start)).fetchone()
+                    if existing and (existing['duration_mins']!=candidate['duration'] or existing['ends_at']!=end):
+                        state['candidate']=candidate;state['status']='boundary_review'
+                    else:
+                        cycle=existing['cycle_id'] if existing else secrets.token_hex(32)
+                        if not existing:
+                            db.execute('''INSERT INTO quota_cycles(tenant_id,cycle_id,account_key,bucket,duration_mins,starts_at,resets_at,ends_at,first_observed_at,last_observed_at,bounds_source)
+                                VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'stable_observations')''',
+                                (tenant,cycle,account,bucket,candidate['duration'],start,end,end,datetime.fromtimestamp(candidate['first'],UTC),row['observed_at']))
+                        state['current']=dict(id=cycle,reset=candidate['reset'],duration=candidate['duration'])
+                current=state.get('current')
+                if current and state['status']=='available':
+                    cycle=current['id'];affected.add(cycle)
+                    db.execute('UPDATE quota_cycles SET last_observed_at=GREATEST(last_observed_at,%s) WHERE tenant_id=%s AND cycle_id=%s',(row['observed_at'],tenant,cycle))
+                    db.execute('''INSERT INTO quota_cycle_observations VALUES(%s,%s,%s,%s,%s) ON CONFLICT(tenant_id,cycle_id,device_id)
+                        DO UPDATE SET last_observed_at=GREATEST(quota_cycle_observations.last_observed_at,EXCLUDED.last_observed_at)''',(tenant,cycle,auth['device_id'],row['observed_at'],row['observed_at']))
+                    db.execute('INSERT INTO quota_cycle_totals(tenant_id,cycle_id,principal_key,machine_key) VALUES(%s,%s,%s,%s) ON CONFLICT DO NOTHING',(tenant,cycle,subject['principal_key'],subject['machine_key']))
+                db.execute('INSERT INTO quota_boundary_states VALUES(%s,%s,%s,%s) ON CONFLICT(tenant_id,account_key,bucket) DO UPDATE SET state=EXCLUDED.state',(tenant,account,bucket,Jsonb(state)))
+            self.refresh_cycle_totals(db,tenant,affected)
+        return dict(recorded=len(rows))
+
+    def current_quota_cycles(self,token,account,principal=None):
+        with self.connect() as db:
+            db.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
+            auth=self.authenticate(db,token,'read');allowed=self.read_principal(db,auth)
+            if allowed and principal and principal!=allowed:raise ApiError('forbidden',403)
+            principal=allowed or principal;tenant=auth['tenant_id']
+            now=db.execute('SELECT transaction_timestamp() t').fetchone()['t']
+            result=dict(account_key=account,principal_key=principal,as_of=iso(now),buckets={})
+            visible=not principal or db.execute('''SELECT 1 FROM quota_boundary_samples o JOIN device_subjects ds ON ds.tenant_id=o.tenant_id AND ds.device_id=o.device_id
+                WHERE o.tenant_id=%s AND o.account_key=%s AND ds.principal_key=%s LIMIT 1''',(tenant,account,principal)).fetchone()
+            for bucket in ('primary','secondary'):
+                slot=dict(status='waiting_observation',cycle=None);result['buckets'][bucket]=slot
+                if not visible:continue
+                row=db.execute('SELECT state FROM quota_boundary_states WHERE tenant_id=%s AND account_key=%s AND bucket=%s',(tenant,account,bucket)).fetchone()
+                if not row:continue
+                state=row['state'];slot['status']=state['status'];current=state.get('current')
+                if now.timestamp()-state['observed_at']>90:slot['status']='observation_stale'
+                if not current or slot['status']!='available':continue
+                cycle=db.execute('SELECT * FROM quota_cycles WHERE tenant_id=%s AND cycle_id=%s',(tenant,current['id'])).fetchone()
+                if not cycle or not cycle['starts_at']<=now<cycle['ends_at']:
+                    slot['status']='waiting_new_cycle';continue
+                totals=db.execute('''SELECT COALESCE(sum(input_tokens),0) AS input,COALESCE(sum(cached_input_tokens),0) AS cached_input,
+                    COALESCE(sum(output_tokens),0) AS output,COALESCE(sum(reasoning_output_tokens),0) AS reasoning_output,
+                    COALESCE(sum(total_tokens),0) AS total,max(computed_at) AS computed_at FROM quota_cycle_totals
+                    WHERE tenant_id=%s AND cycle_id=%s AND (%s::text IS NULL OR principal_key=%s)''',(tenant,current['id'],principal,principal)).fetchone()
+                slot['cycle']=dict(cycle_id=current['id'],bucket=bucket,duration_mins=str(cycle['duration_mins']),resets_at=str(int(cycle['resets_at'].timestamp())),
+                    starts_at=iso(cycle['starts_at']),ends_at=iso(cycle['ends_at']),totals={k:str(totals[k]) for k in (*COUNTERS,'total')},quality='partial',bounds_source=cycle['bounds_source'])
+            return result
+
     def record_quota_cycles(self,token,rows):
         with self.connect() as db:
             auth=self.authenticate(db,token,"write")
@@ -75,7 +153,7 @@ class QuotaCycleStore:
             WHERE d.tenant_id=%s AND d.stream_id=%s AND d.epoch=%s AND d.source_seq>%s AND d.source_seq<=%s""",(*key,before,after)).fetchall()
         self.refresh_cycle_totals(db,key[0],{r["cycle_id"] for r in rows})
 
-    def quota_cycle_history(self,token,account,principal=None,limit=50):
+    def quota_cycle_history(self,token,account,principal=None,limit=50,bucket=None,before=None):
         with self.connect() as db:
             db.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
             auth=self.authenticate(db,token,"read");allowed=self.read_principal(db,auth)
@@ -94,8 +172,11 @@ class QuotaCycleStore:
                     SELECT sum(input_tokens) AS input,sum(cached_input_tokens) AS cached_input,sum(output_tokens) AS output,
                     sum(reasoning_output_tokens) AS reasoning_output,sum(total_tokens) AS total,max(computed_at) AS computed_at
                     FROM quota_cycle_totals t WHERE t.tenant_id=c.tenant_id AND t.cycle_id=c.cycle_id AND (%s::text IS NULL OR t.principal_key=%s)) t ON true
-                WHERE c.tenant_id=%s AND c.account_key=%s ORDER BY c.resets_at DESC,c.bucket LIMIT %s""",
-                (principal,principal,auth["tenant_id"],account,limit)).fetchall()
+                WHERE c.tenant_id=%s AND c.account_key=%s
+                AND (%s::text IS NULL OR c.bucket=%s) AND (%s::timestamptz IS NULL OR c.starts_at<%s)
+                ORDER BY CASE WHEN %s::text IS NULL AND c.starts_at<=%s AND c.ends_at>%s THEN 0 ELSE 1 END,
+                    c.starts_at DESC,c.bucket LIMIT %s""",
+                (principal,principal,auth["tenant_id"],account,bucket,bucket,before,before,bucket,now,now,limit)).fetchall()
         cycles=[]
         for row in rows:
             cycles.append(dict(cycle_id=row["cycle_id"],bucket=row["bucket"],duration_mins=str(row["duration_mins"]),
@@ -103,4 +184,5 @@ class QuotaCycleStore:
                 totals={k:str(row[k]) for k in (*COUNTERS,"total")},computed_at=iso(row["computed_at"]) if row["computed_at"] else None,
                 bounds_source=row["bounds_source"],quality="partial",closed=row["ends_at"]<=now,
                 shortened=row["ends_at"]<row["resets_at"]))
-        return dict(account_key=account,principal_key=principal,as_of=iso(now),cycles=cycles)
+        return dict(account_key=account,principal_key=principal,as_of=iso(now),cycles=cycles,
+                    next_before=cycles[-1]['starts_at'] if bucket and len(cycles)==limit else None)

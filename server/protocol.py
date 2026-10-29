@@ -141,6 +141,21 @@ def subject(value):
     return {key: hex_id(value[key]) for key in ("principal_key", "machine_key")}
 
 
+def display_names(value):
+    import unicodedata
+    fields(value,('profiles',))
+    require(isinstance(value['profiles'],list) and 1<=len(value['profiles'])<=32,'invalid_profile_batch')
+    result=[]
+    for row in value['profiles']:
+        fields(row,('account_key','display_name'))
+        account=hex_id(row['account_key']);name=row['display_name']
+        require(isinstance(name,str) and 1<=len(name)<=120 and name==name.strip(),'invalid_display_name')
+        require(not any(unicodedata.category(c) in ('Cc','Cs') or c in '\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069' for c in name),'invalid_display_name')
+        result.append(dict(account_key=account,display_name=name))
+    require(len({r['account_key'] for r in result})==len(result),'duplicate_account')
+    return result
+
+
 def quota_cycles(value):
     fields(value,("cycles",))
     require(isinstance(value["cycles"],list) and 1<=len(value["cycles"])<=8,"invalid_cycle_batch")
@@ -160,6 +175,15 @@ def quota_cycles(value):
         rows.append(dict(account_key=account,bucket=raw["bucket"],duration_mins=duration,resets_at=end,starts_at=start,observed_at=observed,cycle_id=identity))
     require(len({r["cycle_id"] for r in rows})==len(rows),"duplicate_cycle")
     return sorted(rows,key=lambda r:(r["account_key"],r["bucket"],r["starts_at"]))
+
+
+def quota_observations(value):
+    fields(value,('cycles',))
+    require(isinstance(value['cycles'],list) and 1<=len(value['cycles'])<=100)
+    rows=[quota_cycles(dict(cycles=[row]))[0] for row in value['cycles']]
+    identities={(r['account_key'],r['bucket'],r['observed_at']) for r in rows}
+    require(len(identities)==len(rows),'duplicate_observation')
+    return rows
 
 
 def heartbeat(value):

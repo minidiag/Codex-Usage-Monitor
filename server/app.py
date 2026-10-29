@@ -3,11 +3,12 @@ import asyncio
 import logging
 import time
 from collections import OrderedDict
+from pathlib import Path
 
 import psycopg
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, FileResponse
 from starlette.routing import Route
 from starlette.concurrency import run_in_threadpool
 
@@ -68,7 +69,28 @@ def create_app(store=None):
                 elif action == "identity":
                     result = await run_in_threadpool(store.register_identity, token, protocol.subject(await read_body(request)))
                 elif action == "record_cycles":
-                    result=await run_in_threadpool(store.record_quota_cycles,token,protocol.quota_cycles(await read_body(request)))
+                    # Legacy collectors send the same numeric observation fields.
+                    # Route them through recognition too; they must not create fragments.
+                    value=protocol.quota_cycles(await read_body(request))
+                    result=await run_in_threadpool(store.record_boundary_observations,token,value)
+                elif action == "observe_boundaries":
+                    value=protocol.quota_observations(await read_body(request))
+                    result=await run_in_threadpool(store.record_boundary_observations,token,value)
+                elif action == "current_cycles":
+                    protocol.require(set(request.query_params)<={"account","principal"},"invalid_filter")
+                    protocol.require(all(len(request.query_params.getlist(k))==1 for k in request.query_params),"duplicate_filter")
+                    account=protocol.hex_id(request.query_params.get("account"))
+                    principal=protocol.hex_id(request.query_params["principal"]) if request.query_params.get("principal") else None
+                    result=await run_in_threadpool(store.current_quota_cycles,token,account,principal)
+                elif action == 'bucket_history':
+                    protocol.require(set(request.query_params)<={'account','principal','bucket','before','limit'},'invalid_filter')
+                    protocol.require(all(len(request.query_params.getlist(k))==1 for k in request.query_params),'duplicate_filter')
+                    account=protocol.hex_id(request.query_params.get('account'))
+                    principal=protocol.hex_id(request.query_params['principal']) if request.query_params.get('principal') else None
+                    bucket=request.query_params.get('bucket');protocol.require(bucket in ('primary','secondary'),'invalid_bucket')
+                    before=protocol.timestamp(request.query_params['before']) if request.query_params.get('before') else None
+                    limit=protocol.integer(request.query_params.get('limit','50'));protocol.require(1<=limit<=200,'invalid_limit')
+                    result=await run_in_threadpool(store.quota_cycle_history,token,account,principal,limit,bucket,before)
                 elif action == "cycle_history":
                     protocol.require(set(request.query_params)<={"account","principal","limit"},"invalid_filter")
                     protocol.require(all(len(request.query_params.getlist(k))==1 for k in request.query_params),"duplicate_filter")
@@ -78,6 +100,16 @@ def create_app(store=None):
                     result=await run_in_threadpool(store.quota_cycle_history,token,account,principal,limit)
                 elif action == "identities":
                     result = await run_in_threadpool(store.identities, token)
+                elif action == 'display_names':
+                    value=protocol.display_names(await read_body(request))
+                    result=await run_in_threadpool(store.record_display_names,token,value)
+                elif action == 'trend':
+                    protocol.require(set(request.query_params)<={'account','period'},'invalid_filter')
+                    protocol.require(all(len(request.query_params.getlist(k))==1 for k in request.query_params),'duplicate_filter')
+                    account=protocol.hex_id(request.query_params['account']) if 'account' in request.query_params else None
+                    period=request.query_params.get('period','7d')
+                    protocol.require(period in ('24h','7d','30d','90d'),'invalid_period')
+                    result=await run_in_threadpool(store.usage_trend,token,account,period)
                 elif action == "scoped_summary":
                     allowed = {"account", "principal", "machine", "group_by"}
                     protocol.require(set(request.query_params) <= allowed, "invalid_filter")
@@ -129,9 +161,22 @@ def create_app(store=None):
     async def identities(request): return await dispatch(request, "identities")
     async def scoped_summary(request): return await dispatch(request, "scoped_summary")
     async def cycles(request):return await dispatch(request,"record_cycles" if request.method=="POST" else "cycle_history")
+    async def observations(request):return await dispatch(request,'observe_boundaries')
+    async def current_cycles(request):return await dispatch(request,'current_cycles')
+    async def bucket_history(request):return await dispatch(request,'bucket_history')
+    async def trend(request):return await dispatch(request,'trend')
+    async def display_names(request):return await dispatch(request,'display_names')
+
+    async def dashboard(request):
+        name=request.path_params.get('asset','index.html')
+        if name not in ('index.html','dashboard.js','dashboard.css'):
+            return JSONResponse({'code':'not_found'},404)
+        return FileResponse(Path(__file__).parent/'web'/name,headers={
+            'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer',
+            'Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"})
 
     async def live(request):
-        return JSONResponse({"status": "ok", "service": "codex-usage-monitor", "version": "0.3.0"})
+        return JSONResponse({"status": "ok", "service": "codex-usage-monitor", "version": "0.5.0"})
 
     async def ready(request):
         try:
@@ -139,9 +184,13 @@ def create_app(store=None):
         except psycopg.Error:
             return JSONResponse({"status": "unavailable"}, 503)
 
-    return Starlette(routes=[Route("/", live), Route("/health/live", live), Route("/health/ready", ready),
+    return Starlette(routes=[Route("/", dashboard), Route('/dashboard/{asset}',dashboard), Route('/v3/usage/trend',trend), Route("/health/live", live), Route("/health/ready", ready),
+                            Route('/v3/accounts/display-names',display_names,methods=['POST']),
                             Route("/v2/identity", identity, methods=["POST"]), Route("/v2/identities", identities), Route("/v2/usage/summary", scoped_summary),
                             Route("/v2/usage/quota-cycles",cycles,methods=["GET","POST"]),
+                            Route("/v3/usage/quota-observations",observations,methods=["POST"]),
+                            Route("/v3/usage/quota-current",current_cycles),
+                            Route("/v3/usage/quota-history",bucket_history),
                             Route("/v1/usage/batches", ingest, methods=["POST"]),
                             Route("/v1/usage/summary", summary), Route("/v1/devices/status", devices),
                             Route("/v1/devices/heartbeat", heartbeat, methods=["POST"]),
