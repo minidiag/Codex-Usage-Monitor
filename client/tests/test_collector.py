@@ -84,6 +84,87 @@ class CollectorTests(unittest.TestCase):
     def stream(self):
         return self.ledger.db.execute("SELECT * FROM streams").fetchone()
 
+    def new_fixture(self):
+        fixture = Fixture(self.root/"new.jsonl")
+        fixture.started = datetime.now(UTC)
+        records = fixture.path.read_text(encoding="utf-8").splitlines()
+        meta = json.loads(records[0])
+        meta["payload"]["timestamp"] = iso(fixture.started)
+        records[0] = json.dumps(meta)
+        fixture.path.write_text("\n".join(records)+"\n", encoding="utf-8")
+        return fixture
+
+    def test_new_session_counts_first_request_and_all_initial_checkpoints(self):
+        fixture = self.new_fixture()
+        fixture.point(0, 100)
+        fixture.point(1, 250)
+        self.ledger.scan_file(fixture.path)
+        stream = self.stream()
+        records = self.ledger.pending_batch(stream["id"])["records"]
+        self.assertEqual(stream["anchor_ordinal"], -1)
+        self.assertEqual([r["source_seq"] for r in records], ["0", "1", "2"])
+        self.assertEqual([r["counters"]["input"] for r in records], ["0", "100", "250"])
+        self.assertEqual(records[0]["event_time"], iso(fixture.started))
+        api = FakeApi()
+        upload_once(self.ledger, api)
+        self.assertEqual(self.ledger.pending_count(), 0)
+
+    def test_new_session_observed_before_usage_survives_restart_and_partial_line(self):
+        fixture = self.new_fixture()
+        self.ledger.scan_file(fixture.path)
+        self.ledger.close()
+        self.ledger = Ledger(self.root/"state.sqlite3", KEY, TENANT)
+        fixture.point(0, 100, partial=True)
+        self.ledger.scan_file(fixture.path)
+        self.assertIsNone(self.stream())
+        with fixture.path.open("a") as handle:
+            handle.write("\n")
+        self.ledger.scan_file(fixture.path)
+        self.assertEqual(self.stream()["anchor_ordinal"], -1)
+        self.assertEqual(self.stream()["last_seq"], 1)
+
+    def test_old_or_future_session_metadata_does_not_import_first_request(self):
+        for index, started in enumerate((datetime.now(UTC)-timedelta(days=1), datetime.now(UTC)+timedelta(days=1))):
+            fixture = Fixture(self.root/(str(index)+".jsonl"))
+            rows = fixture.path.read_text(encoding="utf-8").splitlines()
+            meta = json.loads(rows[0]); meta["payload"]["timestamp"] = iso(started)
+            rows[0] = json.dumps(meta)
+            fixture.path.write_text("\n".join(rows)+"\n", encoding="utf-8")
+            fixture.point(0, 100)
+            self.ledger.scan_file(fixture.path)
+        self.assertEqual([r[0] for r in self.ledger.db.execute("SELECT anchor_ordinal FROM streams")], [0, 0])
+
+    def test_zero_anchor_copy_rebase_review_and_archive_remain_verifiable(self):
+        import zstandard
+        from client.source_review import SourceReview
+        fixture = self.new_fixture()
+        fixture.point(0, 100)
+        self.ledger.scan_file(fixture.path)
+        stream = self.stream()
+        copied = self.root/"copy.jsonl"
+        copied.write_bytes(fixture.path.read_bytes())
+        self.ledger.scan_file(copied)
+        self.assertIsNone(self.stream()["paused"])
+        self.assertEqual(self.ledger.pending_count(), 2)
+        api = FakeApi()
+        api.remote = dict(anchor_id=stream["anchor"], baseline_event=json.loads(stream["baseline"]))
+        second = Ledger(self.root/"second.sqlite3", KEY, TENANT)
+        try:
+            second.scan_file(copied)
+            self.assertEqual(second.db.execute("SELECT anchor_ordinal FROM streams").fetchone()[0], 0)
+            upload_once(second, api)
+            self.assertEqual(second.db.execute("SELECT anchor_ordinal FROM streams").fetchone()[0], -1)
+            self.assertEqual(second.pending_count(), 0)
+        finally:
+            second.close()
+        report, _ = SourceReview(self.root/"review", self.ledger, api, [self.root]).inspect_stream(self.stream())
+        self.assertTrue(all(row["anchor_matches"] and row["records_match"] for row in report["sources"]))
+        archive = Path(str(fixture.path)+".zst")
+        archive.write_bytes(zstandard.ZstdCompressor().compress(fixture.path.read_bytes()))
+        fixture.path.unlink()
+        health = self.ledger.source_health([archive])
+        self.assertTrue(health["archives"][0]["proof"]["verified"])
+
     def test_initial_capture_has_one_baseline_and_excludes_history(self):
         self.ledger.scan_file(self.fixture.path)
         records = self.ledger.pending_batch(self.stream()["id"])["records"]

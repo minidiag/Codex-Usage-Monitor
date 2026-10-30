@@ -70,6 +70,56 @@ class IdentityTests(unittest.TestCase):
         self.assertEqual(claim["account_key"],self.tracker.snapshot()["accounts"][0])
         self.assertEqual(claim["principal_key"],self.subject["principal_key"])
 
+    def test_activity_owner_can_be_confirmed_without_any_usage_checkpoint(self):
+        stream = pseudonym(KEY, "codex-rollout-v1", self.session)
+        self.assertEqual(self.tracker.session_claim(stream)["account_key"], self.tracker.snapshot()["accounts"][0])
+        self.assertIsNone(self.tracker.session_claim("unknown"))
+        self.now[0] += 5
+        self.auth("user-b", "workspace-b")
+        self.assertIsNone(self.tracker.session_claim(stream))
+        self.tracker.refresh()
+        self.assertIsNone(self.tracker.session_claim(stream)["account_key"])
+
+    def test_active_view_shows_pending_usage_and_keeps_account_filters(self):
+        from client.agent import Agent
+        from types import SimpleNamespace
+        ledger = Ledger(Path(self.temp.name)/"active.sqlite", KEY, TENANT)
+        self.addCleanup(ledger.close)
+        agent = Agent.__new__(Agent)
+        agent.identity, agent.ledger = self.tracker, ledger
+        account = self.tracker.snapshot()["accounts"][0]
+        agent.filters = dict(principal=self.subject["principal_key"], account=account)
+        agent.active_sessions = SimpleNamespace(snapshot=lambda: dict(sessions=[dict(id=self.session, tokens="999999")]))
+        row = agent.active_view()["sessions"][0]
+        self.assertIsNone(row["tokens"])
+        self.assertIn("等待", row["counter_scope"])
+        agent.filters["account"] = "another-account"
+        self.assertEqual(agent.active_view()["sessions"], [])
+        agent.filters["account"] = "unassigned"
+        self.assertEqual(agent.active_view()["sessions"], [])
+        agent.filters = dict(principal=self.subject["principal_key"])
+        self.assertEqual(len(agent.active_view()["sessions"]), 1)
+        agent.filters["principal"] = "other-user"
+        self.assertEqual(agent.active_view()["sessions"], [])
+
+    def test_first_request_zero_baseline_has_confirmed_attribution(self):
+        fixture = Fixture(self.home/"new.jsonl", self.session)
+        fixture.started = datetime.fromtimestamp(self.now[0]+1, UTC)
+        rows = fixture.path.read_text(encoding="utf-8").splitlines()
+        meta = json.loads(rows[0]); meta["payload"]["timestamp"] = iso(fixture.started)
+        rows[0] = json.dumps(meta)
+        fixture.path.write_text("\n".join(rows)+"\n", encoding="utf-8")
+        fixture.point(0, 100)
+        ledger = Ledger(Path(self.temp.name)/"first.sqlite", KEY, TENANT, attribution_provider=self.tracker.claim)
+        self.addCleanup(ledger.close)
+        ledger.capture_started = iso(datetime.fromtimestamp(self.now[0], UTC))
+        ledger.scan_file(fixture.path)
+        records = ledger.pending_batch(ledger.stream_id(self.session))["records"]
+        self.assertEqual(len(records), 2)
+        self.assertEqual(records[0]["counters"]["input"], "0")
+        self.assertEqual(records[1]["attribution"]["principal_key"], self.subject["principal_key"])
+        self.assertEqual(records[1]["attribution"]["account_key"], self.tracker.snapshot()["accounts"][0])
+
     def test_pre_start_history_and_gap_interval_remain_unassigned(self):
         self.assertIsNone(self.claim(self.now[0]-1))
         self.now[0]+=25

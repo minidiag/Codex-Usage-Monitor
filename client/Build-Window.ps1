@@ -9,6 +9,7 @@ $usageReferences=@('System.dll','System.Core.dll','System.Numerics.dll','System.
 $usageCompilerArgs=@('/nologo','/target:winexe','/optimize+',('/out:'+$usageOutput))
 foreach ($usageReference in $usageReferences) { $usageCompilerArgs+=('/reference:'+(Join-Path $usageFramework $usageReference)) }
 $usageCompilerArgs+=(Join-Path $PSScriptRoot 'FloatingWindow.cs')
+$usageCompilerArgs+=(Join-Path $PSScriptRoot 'EdgeAutoHide.cs')
 $usageCompilerArgs+=(Join-Path $PSScriptRoot 'QuotaView.cs')
 $usageCompilerArgs+=(Join-Path $PSScriptRoot 'AccountView.cs')
 $usageCompilerArgs+=(Join-Path $PSScriptRoot 'CycleView.cs')

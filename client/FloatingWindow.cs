@@ -27,6 +27,7 @@ internal static class FloatingWindowApp
     static Window window;
     static DispatcherTimer timer;
     static MenuItem pauseItem;
+    static EdgeAutoHide edgeHide;
     static Dictionary<string, object> last;
     static string activeSignature;
     static string UserState()
@@ -139,9 +140,9 @@ internal static class FloatingWindowApp
                 && Bool(Get(view, "available")) && Bool(Get(data, "running")) && !Bool(Get(data, "paused"));
             string error = Text(Get(view, "error"));
             bool segmented=Text(Get(Map(Get(data,"filters")),"account"))!="";
-            SetText("ActiveCount", fresh ? rows.Length + (error == "" ? " 个 · 已采集" : " 个 · 部分可读") : "需刷新");
+            SetText("ActiveCount", fresh ? rows.Length + (error == "" ? " 个 · 活跃" : " 个 · 部分可读") : "需刷新");
             Widget<Border>("ActiveBorder").Opacity = fresh ? 1 : 0.6;
-            Widget<Border>("ActiveBorder").ToolTip = "只显示当前 Windows 用户已确认归属的会话分段，随账号选择筛选；不显示整段跨用户历史。列表不会额外加进周期总量。\n" +
+            Widget<Border>("ActiveBorder").ToolTip = "显示当前 Windows 用户已确认归属的活跃会话，随账号选择筛选；用量检查点到来前显示 —。列表不会额外加进周期总量。\n" +
                 (error != "" ? "部分会话或索引暂不可用。" : "按任务开始、完成或中止事件识别；无明确事件时采用最近 10 分钟日志活动。") +
                 "\n每个数据目录检查最近 12 个未归档会话，约每 5 秒刷新。";
             SetText("ActiveEmpty", !Bool(Get(view, "available")) ? "会话索引暂不可用" : (fresh ? (error == "" ? "暂无活跃会话" : "部分会话暂不可读") : "等待会话状态刷新"));
@@ -169,7 +170,7 @@ internal static class FloatingWindowApp
                 grid.Children.Add(details);
                 var number = new TextBlock { Text = Number(Get(row, "tokens")), FontFamily = new FontFamily("Segoe UI"), FontSize = 17, FontWeight = FontWeights.SemiBold, Foreground = (Brush)new BrushConverter().ConvertFromString("#66DDB5") };
                 var box = new Viewbox { Child = number, Stretch = Stretch.Uniform, StretchDirection = StretchDirection.DownOnly, Width = 110, Height = 28, HorizontalAlignment = HorizontalAlignment.Right,
-                    ToolTip = "当前 Windows 用户已采集分段 Token：" + number.Text + "\n按所选账号筛选；会话内累计，不额外计入周期总量。" };
+                    ToolTip = Text(Get(row, "counter_scope")) + "：" + number.Text + "\n按所选账号筛选；会话内累计，不额外计入周期总量。" };
                 Grid.SetColumn(box, 1); grid.Children.Add(box);
                 panel.Children.Add(grid);
             }
@@ -274,13 +275,20 @@ internal static class FloatingWindowApp
                 window = (Window)XamlReader.Parse(File.ReadAllText(Path.Combine(root, "client", "FloatingWindow.xaml"), Encoding.UTF8));
                 Rect area = SystemParameters.WorkArea;
                 window.Left = area.Right - window.Width - 22; window.Top = area.Bottom - window.Height - 24;
+                bool autoHideEnabled=true;
                 try
                 {
                     var pos = Read("window.json"); double x = Convert.ToDouble(Get(pos, "x")), y = Convert.ToDouble(Get(pos, "y"));
-                    if (x >= SystemParameters.VirtualScreenLeft && y >= SystemParameters.VirtualScreenTop && x + window.Width <= SystemParameters.VirtualScreenLeft + SystemParameters.VirtualScreenWidth && y + window.Height <= SystemParameters.VirtualScreenTop + SystemParameters.VirtualScreenHeight - 40) { window.Left = x; window.Top = y; }
+                    if (!Double.IsNaN(x) && !Double.IsInfinity(x) && !Double.IsNaN(y) && !Double.IsInfinity(y)) { window.Left = x; window.Top = y; }
+                    if(Get(pos,"edge_auto_hide")!=null) autoHideEnabled=Bool(Get(pos,"edge_auto_hide"));
                 }
                 catch { }
-                Widget<StackPanel>("DragHandle").MouseLeftButtonDown += delegate(object sender, MouseButtonEventArgs e) { if (e.ButtonState == MouseButtonState.Pressed) window.DragMove(); };
+                Widget<StackPanel>("DragHandle").MouseLeftButtonDown += delegate(object sender, MouseButtonEventArgs e)
+                {
+                    if(e.ButtonState!=MouseButtonState.Pressed) return;
+                    edgeHide.BeginDrag();
+                    try { window.DragMove(); } finally { edgeHide.EndDrag(); }
+                };
                 Widget<Button>("Minimize").Click += delegate { window.WindowState = WindowState.Minimized; };
                 Widget<Button>("CloseWindow").Click += delegate { window.Close(); };
                 var menu = new ContextMenu();
@@ -288,6 +296,8 @@ internal static class FloatingWindowApp
                 pauseItem.Click += delegate {WriteControl("paused",!Bool(Get(last ?? new Dictionary<string,object>(),"paused")));};
                 var pin = new MenuItem { Header = "窗口置顶", IsCheckable = true, IsChecked = true };
                 pin.Click += delegate { window.Topmost = pin.IsChecked; };
+                var edgeHideItem = new MenuItem { Header = "靠边自动隐藏", IsCheckable = true, IsChecked = autoHideEnabled };
+                edgeHideItem.Click += delegate { edgeHide.Enabled=edgeHideItem.IsChecked; };
                 var hide = new MenuItem { Header = "关闭窗口，后台继续采集" }; hide.Click += delegate { window.Close(); };
                 var exit = new MenuItem { Header = "停止采集并退出" }; exit.Click += delegate { File.WriteAllText(stop, "stop"); window.Close(); };
                 var review = new MenuItem { Header = "核实采集来源…" };review.Click+=delegate {SourceReviewWindow.Show(window,state);};
@@ -298,17 +308,19 @@ internal static class FloatingWindowApp
                 Widget<TextBlock>("StatusText").Cursor=Cursors.Hand;
                 Widget<TextBlock>("StatusText").ToolTip="点击打开来源核实与恢复，查看文件差异和可恢复条件。";
                 Widget<TextBlock>("StatusText").MouseLeftButtonUp+=delegate {SourceReviewWindow.Show(window,state);};
-                menu.Items.Add(dashboardAccess);menu.Items.Add(new Separator());menu.Items.Add(pauseItem); menu.Items.Add(proxy); menu.Items.Add(review); menu.Items.Add(pin); menu.Items.Add(hide); menu.Items.Add(exit);
+                menu.Items.Add(dashboardAccess);menu.Items.Add(new Separator());menu.Items.Add(pauseItem); menu.Items.Add(proxy); menu.Items.Add(review); menu.Items.Add(pin); menu.Items.Add(edgeHideItem); menu.Items.Add(hide); menu.Items.Add(exit);
                 Widget<Border>("Surface").ContextMenu = menu;
+                edgeHide=new EdgeAutoHide(window,delegate { return menu.IsOpen || Widget<ComboBox>("AccountScope").IsDropDownOpen; });
+                edgeHide.Enabled=autoHideEnabled;
                 AccountView.Attach(window,WriteControl,AccountPending,state);
                 timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
                 timer.Tick += delegate { Refresh(); };
-                window.Closed += delegate { timer.Stop(); File.WriteAllText(Path.Combine(state, "window.json"), json.Serialize(new { x = window.Left, y = window.Top })); };
+                window.Closed += delegate { timer.Stop(); var bounds=edgeHide.SavedBounds; edgeHide.Dispose(); File.WriteAllText(Path.Combine(state, "window.json"), json.Serialize(new { x = bounds.Left, y = bounds.Top, edge_auto_hide = edgeHide.Enabled })); };
                 Refresh(); timer.Start();
                 window.ShowDialog();
             }
             catch (Exception error) { File.WriteAllText(Path.Combine(state, "window.native.log"), DateTime.UtcNow.ToString("o") + " " + error.GetType().Name); }
-            finally { if (timer != null) timer.Stop(); mutex.ReleaseMutex(); }
+            finally { if (timer != null) timer.Stop(); if(edgeHide!=null) edgeHide.Dispose(); mutex.ReleaseMutex(); }
         }
     }
 }

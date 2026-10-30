@@ -142,6 +142,18 @@ class IdentityTracker:
         if stamp != source["stamp"]: return None
         return dict(self.subject,account_key=account,observed_from=source["observed_from"])
 
+    def session_claim(self, stream):
+        """Local activity ownership is independent of whether a usage delta exists."""
+        matches = self.owners.get(stream, [])
+        if not self.subject or len(matches) != 1:
+            return None
+        home, owner = matches[0]
+        source = self.sources[home]
+        _, stamp = account_metadata(Path(home), self.key)
+        if stamp is None or stamp != source["stamp"]:
+            return None
+        return dict(self.subject, account_key=owner if owner == source["account_key"] else None)
+
     def snapshot(self):
         accounts = sorted({s["account_key"] for s in self.sources.values() if s["account_key"]})
         primary=self.sources.get(str(self.homes[0]),{}).get("account_key") if self.homes else None

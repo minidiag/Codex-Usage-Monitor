@@ -7,7 +7,7 @@ from pathlib import Path
 import sqlite3
 import time
 
-from client.source import Point, read_source
+from client.source import Point, read_source, start_point, anchored_points
 from server.protocol import COUNTERS, UTC, batch, iso
 
 
@@ -26,12 +26,15 @@ class Ledger:
         self.secret = bytes.fromhex(identity_key)
         self.max_pending = max_pending
         self.attribution_provider = attribution_provider
+        self.capture_started = iso(datetime.now(UTC))
         self.db = sqlite3.connect(self.path)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA synchronous=FULL")
         self.db.executescript("""
           CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
+          CREATE TABLE IF NOT EXISTS session_starts(
+            session TEXT PRIMARY KEY,head TEXT NOT NULL,started_at TEXT NOT NULL);
           CREATE TABLE IF NOT EXISTS streams(
             id TEXT PRIMARY KEY, anchor TEXT NOT NULL, anchor_ordinal INTEGER NOT NULL,
             baseline TEXT NOT NULL,last_seq INTEGER NOT NULL,last_point TEXT NOT NULL,
@@ -142,20 +145,31 @@ class Ledger:
             handle.seek(start)
             tail = hashlib.sha256(handle.read(scan.offset-start)).hexdigest()
         with self.db:
+            if (scan.session and scan.started_at and not scan.unsupported and not scan.warnings
+                    and self.capture_started <= scan.started_at <= iso(datetime.now(UTC))):
+                self.db.execute("INSERT OR IGNORE INTO session_starts VALUES(?,?,?)",
+                                (scan.session, scan.head, scan.started_at))
             excluded = stream_id and self.db.execute("SELECT 1 FROM source_exclusions WHERE path=? AND stream_id=?", (path,stream_id)).fetchone()
             if stream_id and not scan.unsupported and not excluded:
                 stream = self.db.execute("SELECT * FROM streams WHERE id=?", (stream_id,)).fetchone()
                 if stream is None and scan.points:
                     point = scan.points[-1]
+                    observed = self.db.execute("SELECT * FROM session_starts WHERE session=?", (scan.session,)).fetchone()
+                    if (observed and observed["head"] == scan.head and observed["started_at"] == scan.started_at
+                            and not scan.warnings and scan.started_at <= scan.points[0].time):
+                        point = start_point(scan, scan.points[0].model)
                     anchor = self.anchor_id(stream_id, point)
                     baseline = self.record(stream_id, point, 0, baseline=True)
                     self.db.execute("""INSERT INTO streams(id,anchor,anchor_ordinal,baseline,last_seq,last_point)
                         VALUES (?,?,?,?,0,?)""", (stream_id, anchor, point.ordinal, compact(baseline), compact(baseline)))
                     self._put(stream_id, anchor, baseline)
+                    if point.ordinal == -1:
+                        stream = self.db.execute("SELECT * FROM streams WHERE id=?", (stream_id,)).fetchone()
+                        self._advance(stream, scan.points)
                 elif stream and not stream["paused"]:
                     # A renamed, archived or copied file must prove the same immutable anchor.
                     if reset:
-                        matching = next((p for p in scan.points if p.ordinal == stream["anchor_ordinal"]), None)
+                        matching = next((p for p in anchored_points(scan, stream) if p.ordinal == stream["anchor_ordinal"]), None)
                         if matching is None or self.anchor_id(stream_id, matching) != stream["anchor"]:
                             self.db.execute("UPDATE streams SET paused='unknown_identity' WHERE id=?", (stream_id,))
                         else:
@@ -212,7 +226,11 @@ class Ledger:
             scan = read_source(row["path"])
             if scan.unsupported:
                 continue
-            point = next((p for p in scan.points if self.anchor_id(stream_id, p) == remote["anchor_id"]), None)
+            # A remote device may have observed this session from its creation.
+            baseline = remote["baseline_event"]
+            zero = start_point(scan, baseline["model"])
+            candidates = ([zero] if zero else []) + scan.points
+            point = next((p for p in candidates if self.anchor_id(stream_id, p) == remote["anchor_id"]), None)
             if point:
                 baseline = remote["baseline_event"]
                 if point.time == baseline["event_time"] and point.model == baseline["model"] and point.counters == baseline["counters"]:

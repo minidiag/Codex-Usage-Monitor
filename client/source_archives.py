@@ -3,7 +3,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from client.source import MAX_FILE, read_source_data
+from client.source import MAX_FILE, read_source_data, anchored_points
 
 try:
     import zstandard
@@ -49,7 +49,7 @@ def verify_archive(ledger, source, archive):
             raise ValueError("该来源未建立采集基线，压缩内容不能当作已同步历史。")
         if scan.unsupported or scan.ordinal != stream["anchor_ordinal"] + stream["last_seq"]:
             raise ValueError("来源格式不支持或仍有未采集检查点，不能确认完整采集。")
-        points = {point.ordinal: point for point in scan.points}
+        points = {point.ordinal: point for point in anchored_points(scan, stream)}
         anchor = points.get(stream["anchor_ordinal"])
         if not anchor or ledger.anchor_id(stream["id"], anchor) != stream["anchor"]:
             raise ValueError("压缩日志不能复现原基线。")

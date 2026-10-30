@@ -195,7 +195,12 @@ class Agent:
                 previous = point
             if matches:
                 rows.append(dict(source,tokens=str(total),counter_scope="当前 Windows 用户已采集"))
-        return dict(view,sessions=rows,scope_note="暂无当前用户已确认用量的活跃会话")
+            else:
+                claim = self.identity.session_claim(stream)
+                if (claim and claim.get("principal_key") == subject.get("principal_key")
+                        and (not account or claim.get("account_key") == selected)):
+                    rows.append(dict(source,tokens=None,counter_scope="等待当前用户用量检查点"))
+        return dict(view,sessions=rows,scope_note="暂无当前用户的活跃会话")
 
     def step(self):
         reasons = set()

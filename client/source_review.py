@@ -12,7 +12,7 @@ import uuid
 
 from client.core import compact
 from client.paths import state_path
-from client.source import MAX_FILE, read_source
+from client.source import MAX_FILE, read_source, anchored_points
 from client.transport import ApiFailure
 from server.protocol import COUNTERS, UTC, iso
 
@@ -126,11 +126,12 @@ class SourceReview:
                 item["issues"].append("日志格式不支持或含解析异常。")
             if not scan.session or self.ledger.stream_id(scan.session) != stream["id"]:
                 item["issues"].append("日志会话标识与登记来源不一致。")
-            anchor = next((point for point in scan.points if point.ordinal == stream["anchor_ordinal"]), None)
+            all_points = anchored_points(scan, stream)
+            anchor = next((point for point in all_points if point.ordinal == stream["anchor_ordinal"]), None)
             item["anchor_matches"] = bool(anchor and self.ledger.anchor_id(stream["id"], anchor) == stream["anchor"])
             if not item["anchor_matches"]:
                 item["issues"].append("缺少原基线，或同位置检查点内容与原基线不同。")
-            points = {point.ordinal: point for point in scan.points}
+            points = {point.ordinal: point for point in all_points}
             item["records_match"] = True
             for event in events:
                 point = points.get(stream["anchor_ordinal"] + event["seq"])

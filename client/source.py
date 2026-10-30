@@ -29,6 +29,7 @@ class Point:
 @dataclass
 class Scan:
     session: str | None = None
+    started_at: str | None = None
     offset: int = 0
     ordinal: int = -1
     model: str = "unknown"
@@ -36,6 +37,23 @@ class Scan:
     warnings: set = field(default_factory=set)
     unsupported: bool = False
     head: str = ""
+
+
+def start_point(scan, model):
+    """Reproducible zero checkpoint for a proven newly created, non-inherited session."""
+    if scan.started_at and not scan.unsupported:
+        return Point(-1, scan.started_at, model, dict.fromkeys(COUNTERS, "0"))
+    return None
+
+
+def anchored_points(scan, stream):
+    points = list(scan.points)
+    if stream["anchor_ordinal"] == -1:
+        baseline = json.loads(stream["baseline"])
+        zero = start_point(scan, baseline["model"])
+        if zero:
+            points.insert(0, zero)
+    return points
 
 
 def read_source(path, offset=0, ordinal=-1, model="unknown", session=None, old_warnings=()):
@@ -56,6 +74,13 @@ def _read_source(handle, size, offset=0, ordinal=-1, model="unknown", session=No
         return result
     first_line = handle.readline(MAX_LINE + 1)
     result.head = hashlib.sha256(first_line).hexdigest()
+    # Also recover creation time during incremental reads, without persisting content.
+    try:
+        first = json.loads(first_line)
+        if first.get("type") == "session_meta":
+            result.started_at = iso(timestamp(first["payload"].get("timestamp") or first.get("timestamp")))
+    except (ApiError, ValueError, TypeError, AttributeError, KeyError, OverflowError):
+        pass  # Older logs without creation metadata retain the historical baseline rule.
     if offset:
         handle.seek(offset)
     else:
